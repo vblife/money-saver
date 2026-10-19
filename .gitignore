@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.venv-test/
+
+# Local data, evidence, and databases (never commit user data)
+data/
+evidence/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Worktrees
+.worktrees/
