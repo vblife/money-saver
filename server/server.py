@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Money Saver Bot MCP server (Python stdlib only).
 
-Usage: server.py --stdio [--db PATH] [--evidence-dir PATH]
-Env: MSB_HOME (default /workspace/money-saver), MSB_DB, MSB_EVIDENCE_DIR.
+Usage: server.py --stdio [--db PATH] [--evidence-dir PATH] [--evidence-inbox DIR[:DIR...]]
+Env: MSB_HOME (default /workspace/money-saver), MSB_DB, MSB_EVIDENCE_DIR, MSB_EVIDENCE_INBOX.
 
 The server is the bot's system of record: Gmail scan planning/ingest, the confirmation gate,
 evidence, and the savings ledger. It never sends email, places calls, or touches external
@@ -21,7 +21,7 @@ sys.path.insert(0, ROOT)
 from core import gmail_scanner, notifier  # noqa: E402
 from core.action_gate import ACTION_TYPES, EXECUTORS, RUN_OUTCOMES, ActionGate, GateError, sha256_text  # noqa: E402
 from core.classifier import CATEGORIES, Classifier  # noqa: E402
-from core.evidence import KINDS as EVIDENCE_KINDS, EvidenceStore  # noqa: E402
+from core.evidence import KINDS as EVIDENCE_KINDS, EvidencePathError, EvidenceStore  # noqa: E402
 from core.ledger import MODULES, Ledger, LedgerError  # noqa: E402
 from core.merchant_resolver import MerchantResolver  # noqa: E402
 from core.privacy import ForbiddenDataError  # noqa: E402
@@ -103,7 +103,7 @@ TOOLS = [
      "inputSchema": O({"run_id": S, "outcome": {"type": "string", "enum": list(RUN_OUTCOMES)}, "evidence_ids": ARR_S,
                        "error_code": S, "log": {"type": "array"}}, ["run_id", "outcome"])},
     {"name": "record_evidence", "title": "Record evidence",
-     "description": "Store evidence: a file path (screenshot, transcript, receipt), a Gmail message id (confirmation_email), or a reference (call_recording_url, statement_line).",
+     "description": "Store evidence: a file path (screenshot, transcript, receipt; must be a regular file inside the evidence inbox, $MSB_HOME/inbox by default; symlinks are rejected), a Gmail message id (confirmation_email), or a reference (call_recording_url, statement_line).",
      "inputSchema": O({"kind": {"type": "string", "enum": list(EVIDENCE_KINDS)}, "related_ref": S, "path": S,
                        "message_id": S, "ref": S, "notes": S}, ["kind", "related_ref"])},
     {"name": "ledger_add", "title": "Add savings ledger entry",
@@ -137,11 +137,11 @@ TOOLS = [
 
 
 class App:
-    def __init__(self, db_path=None, evidence_dir=None):
+    def __init__(self, db_path=None, evidence_dir=None, evidence_inbox=None):
         self.store = Store(db_path)
         self.gate = ActionGate(self.store)
         self.ledger = Ledger(self.store)
-        self.evidence = EvidenceStore(self.store, evidence_dir)
+        self.evidence = EvidenceStore(self.store, evidence_dir, evidence_inbox)
         self.resolver = MerchantResolver()
         self.classifier = Classifier(self.resolver)
 
@@ -237,8 +237,8 @@ class App:
 
 
 class Server:
-    def __init__(self, db_path=None, evidence_dir=None):
-        self.app = App(db_path, evidence_dir)
+    def __init__(self, db_path=None, evidence_dir=None, evidence_inbox=None):
+        self.app = App(db_path, evidence_dir, evidence_inbox)
 
     def handle(self, m):
         meth, p = m.get("method"), m.get("params") or {}
@@ -266,7 +266,7 @@ class Server:
                 raise KeyError(f"unknown tool: {name}")
             try:
                 r = self.app.call(name, p.get("arguments"))
-            except (GateError, LedgerError, ForbiddenDataError, ValueError, TypeError, KeyError) as e:
+            except (GateError, LedgerError, ForbiddenDataError, EvidencePathError, FileNotFoundError, ValueError, TypeError, KeyError) as e:
                 return {"content": [{"type": "text", "text": f"Error: {type(e).__name__}: {e}"}], "isError": True}
             return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False)}], "structuredContent": r}
         raise NotImplementedError(meth)
@@ -307,7 +307,8 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     db = args[args.index("--db") + 1] if "--db" in args else None
     ev = args[args.index("--evidence-dir") + 1] if "--evidence-dir" in args else None
+    inbox = args[args.index("--evidence-inbox") + 1].split(os.pathsep) if "--evidence-inbox" in args else None
     if "--stdio" not in args:
         print(__doc__, file=sys.stderr)
         sys.exit(2)
-    Server(db, ev).run_stdio()
+    Server(db, ev, inbox).run_stdio()

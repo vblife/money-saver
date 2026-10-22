@@ -10,11 +10,12 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 from typing import Any
 
 from . import privacy
 from .store import Store
-from .util import default_evidence_dir, new_id, to_iso, utcnow
+from .util import default_evidence_dir, default_evidence_inbox_dirs, new_id, to_iso, utcnow
 
 KINDS = ("screenshot", "confirmation_email", "call_transcript", "call_recording_url", "form_receipt",
          "chat_transcript", "statement_line")
@@ -31,10 +32,34 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+class EvidencePathError(ValueError):
+    """Raised when a file outside the allowed evidence inbox (or a symlink) is offered as evidence."""
+
+
 class EvidenceStore:
-    def __init__(self, store: Store, root: str | None = None):
+    def __init__(self, store: Store, root: str | None = None, allowed_dirs: list[str] | None = None):
         self.store = store
         self.root = root or default_evidence_dir()
+        self.allowed_dirs = [os.path.realpath(d) for d in (allowed_dirs or default_evidence_inbox_dirs())]
+
+    def check_source(self, src_path: str) -> str:
+        """D14: only regular, non-symlink files whose real path is inside an allowed inbox dir."""
+        if not isinstance(src_path, str) or not src_path:
+            raise EvidencePathError("path is required")
+        abs_path = os.path.abspath(os.path.expanduser(src_path))
+        try:
+            st = os.lstat(abs_path)
+        except FileNotFoundError:
+            raise FileNotFoundError(src_path) from None
+        if stat.S_ISLNK(st.st_mode):
+            raise EvidencePathError(f"symlinks are not accepted as evidence: {src_path}")
+        if not stat.S_ISREG(st.st_mode):
+            raise EvidencePathError(f"not a regular file: {src_path}")
+        real = os.path.realpath(abs_path)
+        for allowed in self.allowed_dirs:
+            if real != allowed and os.path.commonpath([real, allowed]) == allowed:
+                return real
+        raise EvidencePathError(f"evidence files must be inside {', '.join(self.allowed_dirs)}: {src_path}")
 
     def _entity_dir(self, related_ref: str, evidence_id: str) -> str:
         entity = _SAFE.sub("_", related_ref.split("_", 1)[0] or "misc")
@@ -43,8 +68,7 @@ class EvidenceStore:
     def add_file(self, kind: str, src_path: str, related_ref: str, notes: str = "") -> dict[str, Any]:
         if kind not in FILE_KINDS:
             raise ValueError(f"{kind} is not a file evidence kind")
-        if not os.path.isfile(src_path):
-            raise FileNotFoundError(src_path)
+        src_path = self.check_source(src_path)
         evidence_id = new_id("evd")
         dest_dir = self._entity_dir(related_ref, evidence_id)
         os.makedirs(dest_dir, exist_ok=True)

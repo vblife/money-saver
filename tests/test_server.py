@@ -11,7 +11,8 @@ SERVER = os.path.join(ROOT, "server", "server.py")
 class Client:
     def __init__(self, tmp_path):
         self.p = subprocess.Popen([sys.executable, SERVER, "--stdio", "--db", str(tmp_path / "msb.db"),
-                                   "--evidence-dir", str(tmp_path / "evidence")],
+                                   "--evidence-dir", str(tmp_path / "evidence"),
+                                   "--evidence-inbox", str(tmp_path / "inbox")],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.n = 0
 
@@ -75,6 +76,14 @@ def test_stdio_end_to_end(tmp_path):
         wrong_channel = c.tool("start_action_run", request_id=rid, executor="email")
         assert wrong_channel["isError"] and "approved for 'browser'" in wrong_channel["content"][0]["text"]
         run = c.tool("start_action_run", request_id=rid, executor="browser")["structuredContent"]["run"]
+        outside = tmp_path / "id_rsa"
+        outside.write_text("PRIVATE KEY")
+        stolen = c.tool("record_evidence", kind="screenshot", related_ref="sub_hulu", path=str(outside))
+        assert stolen["isError"] and "EvidencePathError" in stolen["content"][0]["text"]
+        (tmp_path / "inbox").mkdir()
+        (tmp_path / "inbox" / "done.png").write_bytes(b"png")
+        shot = c.tool("record_evidence", kind="screenshot", related_ref="sub_hulu", path=str(tmp_path / "inbox" / "done.png"))
+        assert shot["structuredContent"]["evidence"]["sha256"]
         ev = c.tool("record_evidence", kind="confirmation_email", related_ref="sub_hulu", message_id="m-confirm")["structuredContent"]["evidence"]
         done = c.tool("finish_action_run", run_id=run["id"], outcome="success", evidence_ids=[ev["id"]])["structuredContent"]
         assert done["run"]["outcome"] == "success"

@@ -41,7 +41,7 @@ python3 server/server.py --stdio            # MCP server; data in $MSB_HOME (def
 python3 -m pytest -q                         # tests (needs pytest)
 ```
 
-`MSB_DB` and `MSB_EVIDENCE_DIR` override the database and evidence paths.
+`MSB_DB` and `MSB_EVIDENCE_DIR` override the database and evidence paths. `MSB_EVIDENCE_INBOX` (default `$MSB_HOME/inbox`) is the only place evidence files may be copied from.
 
 ## License
 

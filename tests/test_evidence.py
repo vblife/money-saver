@@ -1,16 +1,103 @@
-from core.evidence import EvidenceStore
+import os
+
+import pytest
+
+from core.evidence import EvidencePathError, EvidenceStore
 
 
-def test_file_evidence_is_copied_and_hashed(store, tmp_path):
-    src = tmp_path / "shot.png"
+@pytest.fixture
+def inbox(tmp_path):
+    d = tmp_path / "inbox"
+    d.mkdir()
+    return d
+
+
+@pytest.fixture
+def es(store, tmp_path, inbox):
+    return EvidenceStore(store, root=str(tmp_path / "evidence"), allowed_dirs=[str(inbox)])
+
+
+def test_file_evidence_is_copied_and_hashed(es, inbox, tmp_path):
+    src = inbox / "shot.png"
     src.write_bytes(b"\x89PNG fake")
-    ev_store = EvidenceStore(store, root=str(tmp_path / "evidence"))
-    ev = ev_store.add_file("screenshot", str(src), "sub_hulu", "cancel confirmation page")
+    ev = es.add_file("screenshot", str(src), "sub_hulu", "cancel confirmation page")
     assert ev["path_or_ref"].startswith(str(tmp_path / "evidence" / "sub" / "sub_hulu"))
-    assert len(ev["sha256"]) == 64 and ev_store.verify(ev["id"])
+    assert len(ev["sha256"]) == 64 and es.verify(ev["id"])
     with open(ev["path_or_ref"], "ab") as fh:
         fh.write(b"tamper")
-    assert not ev_store.verify(ev["id"])
+    assert not es.verify(ev["id"])
+
+
+def test_nested_inbox_file_is_allowed(es, inbox):
+    (inbox / "calls").mkdir()
+    src = inbox / "calls" / "t.txt"
+    src.write_text("transcript")
+    assert es.add_file("call_transcript", str(src), "run_1")["kind"] == "call_transcript"
+
+
+# --- regression: record_evidence must not copy arbitrary files (review non-blocking, D14) -----------
+def test_rejects_file_outside_inbox(es, tmp_path):
+    secret = tmp_path / ".ssh" / "id_rsa"
+    secret.parent.mkdir()
+    secret.write_text("-----BEGIN OPENSSH PRIVATE KEY-----")
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(secret), "sub_x")
+    assert es.store.count("evidence") == 0
+
+
+def test_rejects_home_ssh_key_path(es):
+    with pytest.raises((EvidencePathError, FileNotFoundError)):
+        es.add_file("screenshot", "~/.ssh/id_rsa", "sub_x")
+
+
+def test_rejects_dotdot_traversal(es, inbox, tmp_path):
+    outside = tmp_path / "token.txt"
+    outside.write_text("ghs_secret")
+    with pytest.raises(EvidencePathError):
+        es.add_file("form_receipt", str(inbox / ".." / "token.txt"), "clm_1")
+
+
+def test_rejects_symlink_escaping_inbox(es, inbox, tmp_path):
+    outside = tmp_path / "creds.json"
+    outside.write_text("{}")
+    link = inbox / "innocent.png"
+    os.symlink(outside, link)
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(link), "sub_x")
+
+
+def test_rejects_symlink_even_inside_inbox(es, inbox):
+    real = inbox / "real.png"
+    real.write_bytes(b"x")
+    link = inbox / "link.png"
+    os.symlink(real, link)
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(link), "sub_x")
+
+
+def test_rejects_symlinked_directory_escaping_inbox(es, inbox, tmp_path):
+    outside_dir = tmp_path / "private"
+    outside_dir.mkdir()
+    (outside_dir / "key").write_text("secret")
+    os.symlink(outside_dir, inbox / "sub")
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(inbox / "sub" / "key"), "sub_x")
+
+
+def test_rejects_directories_and_missing_files(es, inbox):
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(inbox), "sub_x")
+    with pytest.raises(FileNotFoundError):
+        es.add_file("screenshot", str(inbox / "missing.png"), "sub_x")
+
+
+def test_default_inbox_comes_from_env(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("MSB_EVIDENCE_INBOX", str(tmp_path / "a") + os.pathsep + str(tmp_path / "b"))
+    es = EvidenceStore(store, root=str(tmp_path / "ev"))
+    assert es.allowed_dirs == [os.path.realpath(tmp_path / "a"), os.path.realpath(tmp_path / "b")]
+    monkeypatch.delenv("MSB_EVIDENCE_INBOX")
+    monkeypatch.setenv("MSB_HOME", str(tmp_path / "home"))
+    assert EvidenceStore(store).allowed_dirs == [os.path.realpath(tmp_path / "home" / "inbox")]
 
 
 def test_email_evidence_stores_reference_and_redacted_snippet_only(store, tmp_path):
@@ -20,10 +107,9 @@ def test_email_evidence_stores_reference_and_redacted_snippet_only(store, tmp_pa
     assert "4111 1111" not in ev["notes"] and len(ev["notes"]) <= 280
 
 
-def test_wipe_files(store, tmp_path):
-    src = tmp_path / "t.txt"
+def test_wipe_files(es, inbox, tmp_path):
+    src = inbox / "t.txt"
     src.write_text("transcript")
-    es = EvidenceStore(store, root=str(tmp_path / "ev"))
     es.add_file("call_transcript", str(src), "run_1")
     es.wipe_files()
-    assert not (tmp_path / "ev").exists()
+    assert not (tmp_path / "evidence").exists()

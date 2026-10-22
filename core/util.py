@@ -25,6 +25,14 @@ def default_evidence_dir() -> str:
     return os.environ.get("MSB_EVIDENCE_DIR", os.path.join(data_home(), "evidence"))
 
 
+def default_evidence_inbox_dirs() -> list[str]:
+    """Directories record_evidence may copy files from (D14). MSB_EVIDENCE_INBOX may list several (os.pathsep)."""
+    env = os.environ.get("MSB_EVIDENCE_INBOX")
+    if env:
+        return [d for d in env.split(os.pathsep) if d]
+    return [os.path.join(data_home(), "inbox")]
+
+
 def new_id(prefix: str) -> str:
     # Letters only: ids never contain digit runs that could look like card numbers to the privacy scanner.
     return f"{prefix}_{''.join(secrets.choice(string.ascii_lowercase) for _ in range(16))}"
