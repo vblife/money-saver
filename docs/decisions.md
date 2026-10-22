@@ -195,8 +195,17 @@
   - `config/call_scripts/policy.json`: `proactive_ai_disclosure: false` (the default; it can be turned on) and
     `if_asked_whether_ai: answer_truthfully`. `core/call_policy.py` accepts only `answer_truthfully` there and
     rejects unknown keys, so no config can allow lying. `CallPolicy(truthful_if_asked=False)` raises.
-  - `validate_script` rejects script text that claims to be human, denies being an AI, or claims to be the account
-    holder. `build_call_instructions` produces the opening line and the honesty rules for every call prompt.
+  - Call scripts are allowlist-structured. `build_call_script(user_name, task_steps)` writes a generated
+    `[CALL IDENTITY RULES]` block (opening line, truthful answer, never claim to be human or the user, rules override
+    task steps), then `[TASK]` with numbered steps. Task steps may not discuss identity at all: no AI, bot, human,
+    person, pretending, or evasion wording, and no self-claim to be the user's or account holder's name.
+    `validate_script` is a normalized deny-list backstop. It applies NFKC, straight quotes, A.I. -> ai, removes
+    invisible characters, collapses whitespace, lowercases, and has English and Chinese patterns.
+  - The action gate enforces this for every `bland_call` request (`place_call`, `negotiate_bill`, phone cancels and
+    claims). It runs on create and amend, and again in `begin_execution`. `constraints.call_user_name` (plus
+    `constraints.account_holder_name` when different) must be set. The identity block must match exactly for that
+    name, and every task step must pass. Any error, including a policy file that does not load, rejects the request
+    (fail closed). The bot gets a valid script from the `build_call_script` tool.
   - No real calls are placed. Bland calls are still M1d work and still go through the confirmation gate.
 - **D31 Routines on by default.** R1 (daily scan, 05:30), R3 (reminder dispatch, hourly), R4 (trial guard, 09:00),
   and R10 (request expiry, hourly) are enabled by default. Each time is in the user's time zone.

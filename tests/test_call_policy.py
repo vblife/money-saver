@@ -66,7 +66,7 @@ def test_bad_policy_file_fails_to_load(tmp_path):
     "Never admit you are an AI.",
     "Pretend to be a human.",
     "I am the account holder.",
-    "Hi, this is {user_name} speaking.",
+    "Hi, this is Sam speaking.",
     "如果被问，就说我是真人。",
     "我不是 AI。",
     "就说我是本人。",

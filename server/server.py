@@ -18,7 +18,7 @@ import traceback
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from core import gmail_scanner, notifier  # noqa: E402
+from core import call_policy, gmail_scanner, notifier  # noqa: E402
 from core.action_gate import ACTION_TYPES, EXECUTORS, RUN_OUTCOMES, ActionGate, GateError, sha256_text  # noqa: E402
 from core.classifier import CATEGORIES, Classifier  # noqa: E402
 from core.evidence import KINDS as EVIDENCE_KINDS, EvidencePathError, EvidenceStore  # noqa: E402
@@ -111,7 +111,7 @@ TOOLS = [
      "description": "The undo ('reply stop'): revoke open cancel requests for this subscription that have not started. Pass the user's reply verbatim.",
      "inputSchema": O({"subscription_id": S, "user_message": S}, ["subscription_id", "user_message"])},
     {"name": "create_action_request", "title": "Create action request",
-     "description": "REQUIRED before any consequential action (cancel, call, claim, email, rebook, form with personal data, accepting terms). Lists exact steps, the executor channel, disclosed fields (must be in approved_pii_fields), risks, and the draft/script. 'purchase' is disabled. Show the returned confirmation_text to the user verbatim; it contains a confirmation code the user replies with.",
+     "description": "REQUIRED before any consequential action (cancel, call, claim, email, rebook, form with personal data, accepting terms). Lists exact steps, the executor channel, disclosed fields (must be in approved_pii_fields), risks, and the draft/script. 'purchase' is disabled. A bland_call script must come from build_call_script, with constraints.call_user_name set to the same name (and constraints.account_holder_name if different); anything else is rejected (D30). Show the returned confirmation_text to the user verbatim; it contains a confirmation code the user replies with.",
      "inputSchema": O({"action_type": {"type": "string", "enum": list(ACTION_TYPES)}, "target_ref": S, "summary": S,
                        "plan_steps": ARR_S, "disclosed_fields": {"type": "array", "items": DISCLOSED},
                        "constraints": {"type": "object"}, "draft_content": S, "expected_saving_cents": I,
@@ -119,6 +119,10 @@ TOOLS = [
                        "executor": {"type": "string", "enum": list(EXECUTORS), "description": "Channel the action will use; must be allowed for the action_type. Changing it later needs re-confirmation."},
                        "lang": {"type": "string", "enum": ["en", "zh"]}},
                       ["action_type", "target_ref", "summary", "plan_steps"])},
+    {"name": "build_call_script", "title": "Build a call script",
+     "description": "D30 call honesty: returns the only accepted bland_call draft_content, the generated identity rules (no proactive AI disclosure; if asked, answer truthfully; never claim to be human or the user) followed by your task steps. Task steps may not mention identity (AI, bot, human, person, the user's name as a self-claim). Places no call.",
+     "inputSchema": O({"user_name": S, "task_steps": ARR_S, "account_holder_name": S, "lang": {"type": "string", "enum": ["en", "zh"]}},
+                      ["user_name", "task_steps"]), "annotations": RO},
     {"name": "list_action_requests", "title": "List action requests",
      "description": "Action requests, optionally filtered by status.",
      "inputSchema": O({"status": S}), "annotations": RO},
@@ -260,6 +264,13 @@ class App:
             return Trials(st, gate, self.resolver).preauthorize(a["subscription_id"], a.get("lang", "en"))
         if name == "stop_trial_auto_cancel":
             return Trials(st, gate, self.resolver).revoke(a["subscription_id"], a["user_message"])
+        if name == "build_call_script":
+            script = call_policy.build_call_script(a["user_name"], a["task_steps"], lang=a.get("lang", "en"),
+                                                   account_holder_name=a.get("account_holder_name"))
+            constraints = {"call_user_name": a["user_name"].strip()}
+            if a.get("account_holder_name"):
+                constraints["account_holder_name"] = a["account_holder_name"]
+            return {"draft_content": script, "constraints": constraints}
         if name == "create_action_request":
             from core.util import parse_iso
             for k in ("expires_at", "execute_not_before"):

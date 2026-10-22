@@ -12,8 +12,11 @@ Charles's approval.
   the answer is yes, it is an AI assistant calling on behalf of the user. The caller never claims to be human and
   never claims to be the user. `if_asked_whether_ai` accepts only `answer_truthfully`. Any other value, or any key
   that would allow denying it, makes the policy fail to load. There is no setting that allows lying.
-- Every script is checked with `validate_script`. Text that claims to be human, denies being an AI, or claims to be
-  the account holder is rejected.
+- Scripts are built with `build_call_script` (MCP tool `build_call_script`): a generated identity block, then
+  numbered task steps. Task steps may not talk about identity at all. The action gate checks every `bland_call`
+  request on create, amend, and before execution (`validate_call_draft`), with `constraints.call_user_name`, and
+  rejects anything else. `validate_script` is a normalized deny-list backstop (curly quotes, full-width letters,
+  `A.I.`, English and Chinese).
 
 Scripts also disclose only the fields listed in the approved ActionRequest, and never accept new terms outside
 pre-approved limits.

@@ -28,7 +28,7 @@ import unicodedata
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from . import notifier, privacy
+from . import call_policy, notifier, privacy
 from .store import MAX_APPROVAL_TTL_HOURS, Store
 from .util import new_id, parse_iso, to_iso, utcnow
 
@@ -247,6 +247,8 @@ class ActionGate:
         constraints = row.get("constraints")
         if constraints is not None and not isinstance(constraints, dict):
             raise GateError("constraints must be an object")
+        if executor == "bland_call":
+            self._check_call_script(row)
         saving = row.get("expected_saving_cents")
         if saving is not None and (not isinstance(saving, int) or isinstance(saving, bool)):
             raise GateError("expected_saving_cents must be an integer number of cents")
@@ -255,6 +257,17 @@ class ActionGate:
                 privacy.assert_no_forbidden_secrets(row[key], field=key)
         for step in steps:
             privacy.assert_no_forbidden_secrets(step, field="plan_steps")
+
+    @staticmethod
+    def _check_call_script(row: dict[str, Any]) -> None:
+        """D30: every call script must be the generated identity block plus identity-free task steps, for the
+        name in constraints.call_user_name. Fails closed: any error, including an unreadable policy, blocks it."""
+        c = row.get("constraints") or {}
+        try:
+            call_policy.validate_call_draft(row.get("draft_content"), c.get("call_user_name"),
+                                            c.get("account_holder_name"))
+        except Exception as exc:  # noqa: BLE001 - fail closed on anything
+            raise GateError(f"call script rejected by the call honesty policy (D30): {exc}") from exc
 
     def _render(self, row: dict[str, Any], lang: str) -> dict[str, Any]:
         """Fresh confirmation code + the exact text shown to the user + its digest."""
@@ -469,7 +482,9 @@ class ActionGate:
     def begin_execution(self, request_id: str, executor: str) -> dict[str, Any]:
         if executor not in EXECUTORS:
             raise GateError(f"unknown executor: {executor}")
-        self.require_approved(request_id, executor)
+        req = self.require_approved(request_id, executor)
+        if executor == "bland_call":
+            self._check_call_script(req)
         existing = self.store.find("action_runs", {"action_request_id": request_id})
         if existing:
             run = existing[0]

@@ -84,7 +84,8 @@ passwords, full card numbers, CVV, full SSN, or bank credentials; the user logs 
 On calls (Q3, decided 2026-10-22): open by saying you are calling on behalf of the user. Do not volunteer that you
 are an AI. If anyone asks whether you are an AI, a bot, or a real person, answer truthfully ("Yes, I'm an AI
 assistant calling on behalf of <user>"). Never claim to be human and never claim to be the user. Every call script
-must pass `core/call_policy.py`. Never bypass a CAPTCHA; hand it to the user.
+must come from `build_call_script` (pass the user's name and the task steps; task steps never mention identity),
+and the request needs `constraints.call_user_name`; the gate rejects anything else. Never bypass a CAPTCHA; hand it to the user.
 
 ## 3. Evidence and ledger
 - Record evidence with `record_evidence`: screenshots and transcripts by file path (only files saved inside the
