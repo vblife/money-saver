@@ -120,3 +120,33 @@ should be confirmed by Charles before any real call or live cancellation.
   note and must be requested again. Terminal rows are kept. A request without a bound code and text can never be
   approved. A database with a newer version than the code is refused. Every future schema change must bump
   `SCHEMA_VERSION` and add a migration step with a test that starts from the previous frozen schema.
+
+## Engineering decisions (M1a: subscription inventory)
+- **D16 Inventory source and identity.** `modules/subscriptions.py` builds `subscriptions` and `charges` only from
+  indexed `source_messages` (structured fields with evidence spans, never full bodies). One subscription is one
+  `(merchant_id, account_email, billing_channel)`. Statement charges (M1c) attach through `charges.subscription_id`.
+  Rebuilding is idempotent. A row is rewritten only when a derived field changes. Statuses owned by the user or the
+  cancellation flow (`ignored`, `paused`, `cancel_*`, `cancelled`, `charged_after_cancel`) are never overwritten.
+  M1a adds no schema change.
+- **D17 Billing channel.** The receipt's sender decides the channel: Apple → `apple`, Google Play → `google_play`,
+  PayPal → `paypal`, Amazon → `amazon`. A registry `billed_via_parent` (Apple Music → Apple) is used otherwise.
+  Stripe is a payment processor, so Stripe receipts count as `direct` (the merchant is cancelled directly). An
+  aggregator receipt that names no known service stays under the aggregator as "(service not identified)", with
+  lower confidence.
+- **D18 Period, next charge, expiry.** With two or more charges, the median gap picks the period from these bands:
+  weekly 5-9 days, monthly 26-35, quarterly 84-98, semiannual 170-195, annual 350-380. Otherwise the email wording
+  decides (FR-1-3). Next charge: the trial end date, else the newest explicit renewal or next-billing date after the
+  last charge, else last charge + period. A date in the past rolls forward to today or later (FR-1-4). With no
+  charge for two periods plus 3 days (or 400 days when the period is unknown) and no future renewal date, the
+  status is `expired` (10.1).
+- **D19 Last used (FR-1-5).** It is only ever an inference, and the evidence text always starts with "Inferred". The
+  newest usage email for the merchant and account counts. Sign-in or activity emails give `active` if 60 days old
+  or less. Win-back emails ("we miss you", "come back") give `likely_unused` if 180 days old or less. Otherwise it is
+  `unknown`. A new `usage_signals` Gmail query template fetches these emails (subject-targeted only, PV-2).
+- **D20 Price increases (FR-1-16).** An increase is reported when a charge is higher than the previous one, or when a
+  price-change email ("from $X to $Y", "will increase to $Y") is higher than the current amount. Decreases are not
+  reported. The alternatives are the generic options (cheaper tier or annual plan, keep, cancel with confirmation)
+  plus up to three registry peers in the same category. Their prices are **not** checked, and the bot must say so.
+  Increases are computed when asked for and are not stored. Deduplicating notifications belongs to the routines
+  (M1b).
+

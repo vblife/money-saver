@@ -99,3 +99,74 @@ def format_month_headline(summary: dict[str, Any], month_label: str, lang: str =
     if summary.get("points"):
         parts.append(("积分/里程（未计入）" if lang == "zh" else "Points/miles (not counted): ") + f"{summary['points']:,}")
     return "\n".join(parts)
+
+
+# --- subscriptions (US-1-1, FR-1-16) ---------------------------------------------------------------
+PERIOD_SUFFIX = {
+    "en": {"weekly": "/week", "monthly": "/month", "quarterly": "/quarter", "semiannual": "/6 months",
+           "annual": "/year", "unknown": " (period unknown)"},
+    "zh": {"weekly": "/周", "monthly": "/月", "quarterly": "/季度", "semiannual": "/半年", "annual": "/年",
+           "unknown": "（周期未知）"},
+}
+SUB_LABELS = {
+    "en": {"header": "Your subscriptions ({n})", "next": "next charge", "used": "last used",
+           "inferred": "inferred", "conf": "confidence", "trial": "free trial ends", "then": "then",
+           "total": "Active total: {m}/month (about {y}/year)", "empty": "I haven't found any subscriptions yet.",
+           "review": "Please check these (low confidence): {names}",
+           "via": {"apple": "via Apple", "google_play": "via Google Play", "paypal": "via PayPal",
+                   "amazon": "via Amazon"},
+           "signals": {"active": "recently active", "likely_unused": "possibly unused", "unknown": "unknown"},
+           "price": "Price increase: {name} went from {old} to {new}{per}.",
+           "price_opts": "Options: {opts}. Similar services: {peers}."},
+    "zh": {"header": "你的订阅（{n} 项）", "next": "下次扣费", "used": "最后使用", "inferred": "推断",
+           "conf": "置信度", "trial": "免费试用结束", "then": "之后",
+           "total": "活跃订阅合计：{m}/月（约 {y}/年）", "empty": "暂未发现订阅。",
+           "review": "请核实以下项目（置信度低）：{names}",
+           "via": {"apple": "经 Apple", "google_play": "经 Google Play", "paypal": "经 PayPal", "amazon": "经 Amazon"},
+           "signals": {"active": "近期活跃", "likely_unused": "可能未使用", "unknown": "未知"},
+           "price": "价格上涨：{name} 从 {old} 涨到 {new}{per}。",
+           "price_opts": "可选：{opts}。同类服务：{peers}。"},
+}
+
+
+def format_subscription_list(listing: dict[str, Any], lang: str = "en") -> str:
+    """US-1-1: name, amount, period, next charge, last-used signal (labelled inferred), confidence."""
+    L = SUB_LABELS.get(lang, SUB_LABELS["en"])
+    P = PERIOD_SUFFIX.get(lang, PERIOD_SUFFIX["en"])
+    subs = listing.get("subscriptions") or []
+    if not subs:
+        return L["empty"]
+    lines = [L["header"].format(n=len(subs))]
+    for s in subs:
+        via = L["via"].get(s.get("billing_channel"), "")
+        name = f"{s['display_name']} ({via})" if via else s["display_name"]
+        price = money(s.get("amount_cents"), s.get("currency") or "USD") + P.get(s.get("period") or "unknown", "")
+        if s.get("status") == "trial":
+            price = (f"{L['trial']} {s.get('trial_end_date') or '?'}, {L['then']} "
+                     f"{money(s.get('trial_converts_to_cents') or s.get('amount_cents'))}{P.get(s.get('period') or 'unknown', '')}")
+        parts = [name, price]
+        if s.get("next_charge_date") and s.get("status") != "trial":
+            parts.append(f"{L['next']} {s['next_charge_date']}")
+        signal = L["signals"].get(s.get("last_used_signal") or "unknown", "")
+        parts.append(f"{L['used']}: {signal} ({L['inferred']})")
+        parts.append(f"{L['conf']} {s.get('confidence', 0):.2f}")
+        lines.append("• " + " · ".join(parts))
+    m = listing.get("monthly_total_cents") or 0
+    lines.append(L["total"].format(m=money(m), y=money(m * 12)))
+    review = [s["display_name"] for s in subs if s["id"] in set(listing.get("needs_review") or [])]
+    if review:
+        lines.append(L["review"].format(names=", ".join(review)))
+    return "\n".join(lines)
+
+
+def format_price_changes(changes: list[dict[str, Any]], lang: str = "en") -> str:
+    L = SUB_LABELS.get(lang, SUB_LABELS["en"])
+    P = PERIOD_SUFFIX.get(lang, PERIOD_SUFFIX["en"])
+    lines = []
+    for c in changes:
+        lines.append(L["price"].format(name=c["display_name"], old=money(c["old_cents"]), new=money(c["new_cents"]),
+                                       per=P.get(c.get("period") or "unknown", "")))
+        alt = c.get("alternatives") or {}
+        lines.append(L["price_opts"].format(opts="; ".join(alt.get("options") or []),
+                                            peers=", ".join(alt.get("similar_services") or []) or "—"))
+    return "\n".join(lines)

@@ -37,7 +37,7 @@ Source: `docs/spec.md` chapter 12 (milestones), with the defaults in `docs/decis
 ## M1 - Subscriptions and free trials, module 1 (about 2 weeks)
 
 **Scope (spec 12, 5.1)** - suggested PR split:
-1. **M1a Subscription inventory:** build `Subscription` + `Charge` from indexed messages; aggregator split; period
+1. **M1a Subscription inventory** (done in `modules/subscriptions.py`; see D16-D20): build `Subscription` + `Charge` from indexed messages; aggregator split; period
    inference (FR-1-3); `next_charge_date` (FR-1-4); last-used signal labelled "inferred" (FR-1-5); price-increase
    detection (FR-1-16); conversational list ("what subscriptions do I have?").
 2. **M1b Duplicates and trials:** duplicate rules a/b/c (FR-1-6); trial tracking with inferred lengths flagged low

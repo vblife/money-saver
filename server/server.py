@@ -26,6 +26,7 @@ from core.ledger import MODULES, Ledger, LedgerError  # noqa: E402
 from core.merchant_resolver import MerchantResolver  # noqa: E402
 from core.privacy import ForbiddenDataError  # noqa: E402
 from core.store import USER_FIELDS, Store  # noqa: E402
+from modules import subscriptions as subs_mod  # noqa: E402
 
 NAME, VERSION = "money-saver", "0.1.0"
 DELETE_PHRASE = "DELETE ALL MY DATA"
@@ -66,6 +67,24 @@ TOOLS = [
     {"name": "resolve_merchant", "title": "Resolve merchant",
      "description": "Normalize a merchant name, sender address, or text to a merchant_registry id. Entries marked unverified need an extra warning before any action (Q11).",
      "inputSchema": O({"name": S, "from_addr": S, "text": S}), "annotations": RO},
+    {"name": "build_subscription_inventory", "title": "Build subscription inventory",
+     "description": "Rebuild subscriptions and charges from the indexed messages (run after ingest_messages). Idempotent. Never changes statuses set by the user or the cancellation flow. Returns created/updated ids, unresolved message ids, and price increases.",
+     "inputSchema": O({"today": S})},
+    {"name": "list_subscriptions", "title": "What subscriptions do I have?",
+     "description": "Subscriptions with amount, period, next charge date, last-used signal (always inferred), and confidence, plus a ready-to-show text. Hides cancelled/expired/ignored unless include_inactive.",
+     "inputSchema": O({"include_inactive": B, "lang": {"type": "string", "enum": ["en", "zh"]}}), "annotations": RO},
+    {"name": "subscription_price_changes", "title": "Subscription price increases",
+     "description": "FR-1-16: subscriptions whose price went up (higher charge or a price-change email), with alternatives. Alternatives' prices are not checked.",
+     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}}), "annotations": RO},
+    {"name": "update_subscription", "title": "Record the user's choice for a subscription",
+     "description": "Store the user's decision (keep / cancel / remind_later / none) or mark a subscription ignored (gift, company-paid) or un-ignore it. Recording 'cancel' does NOT cancel anything; cancellation needs create_action_request and the user's confirmation.",
+     "inputSchema": O({"subscription_id": S, "user_decision": {"type": "string", "enum": list(subs_mod.USER_DECISIONS)},
+                       "status": {"type": "string", "enum": sorted(subs_mod.USER_STATUS_CHANGES)}}, ["subscription_id"])},
+    {"name": "add_subscription", "title": "Add a subscription the user mentioned",
+     "description": "Add a subscription the user told you about (source user_added). Amount in integer cents.",
+     "inputSchema": O({"display_name": S, "amount_cents": I, "period": {"type": "string", "enum": list(subs_mod.PERIODS)},
+                       "next_charge_date": S, "merchant_id": S, "account_email": S},
+                      ["display_name", "amount_cents", "period"])},
     {"name": "create_action_request", "title": "Create action request",
      "description": "REQUIRED before any consequential action (cancel, call, claim, email, rebook, form with personal data, accepting terms). Lists exact steps, the executor channel, disclosed fields (must be in approved_pii_fields), risks, and the draft/script. 'purchase' is disabled. Show the returned confirmation_text to the user verbatim; it contains a confirmation code the user replies with.",
      "inputSchema": O({"action_type": {"type": "string", "enum": list(ACTION_TYPES)}, "target_ref": S, "summary": S,
@@ -171,6 +190,21 @@ class App:
         if name == "resolve_merchant":
             hit = self.resolver.resolve(a.get("name"), a.get("from_addr"), a.get("text"))
             return {"match": hit, "merchant": self.resolver.get(hit["merchant_id"]) if hit else None}
+        if name == "build_subscription_inventory":
+            from datetime import date
+            today = date.fromisoformat(a["today"]) if a.get("today") else None
+            return subs_mod.SubscriptionInventory(st, self.resolver).build(today)
+        if name == "list_subscriptions":
+            listing = subs_mod.list_subscriptions(st, bool(a.get("include_inactive")))
+            return {**listing, "text": notifier.format_subscription_list(listing, a.get("lang", "en"))}
+        if name == "subscription_price_changes":
+            changes = subs_mod.SubscriptionInventory(st, self.resolver).price_changes()
+            return {"price_changes": changes, "text": notifier.format_price_changes(changes, a.get("lang", "en"))}
+        if name == "update_subscription":
+            return {"subscription": subs_mod.update_subscription(st, a["subscription_id"], a.get("user_decision"),
+                                                                 a.get("status"))}
+        if name == "add_subscription":
+            return {"subscription": subs_mod.add_manual_subscription(st, **a)}
         if name == "create_action_request":
             from core.util import parse_iso
             for k in ("expires_at", "execute_not_before"):
