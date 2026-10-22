@@ -42,12 +42,13 @@ Source: `docs/spec.md` chapter 12 (milestones), with the defaults in `docs/decis
    detection (FR-1-16); conversational list ("what subscriptions do I have?").
 2. **M1b Duplicates and trials** (done in `modules/duplicates.py`, `modules/trials.py`, and `routines/`; see D21-D25): duplicate rules a/b/c (FR-1-6); trial tracking with inferred lengths flagged low
    confidence (FR-1-7); `Reminder` rows at T-2 and T-1 at 09:00 local (FR-1-8); pre-authorized auto-cancel with the
-   2-hour revoke window (FR-1-9, already supported by the gate); routines R1, R3, R4, R10 as code (scheduling config
-   held for approval).
+   2-hour revoke window (FR-1-9, already supported by the gate); routines R1, R3, R4, R10 as code, enabled by default
+   (`routines/schedule.py`, approved by Charles 2026-10-22, D31).
 3. **M1c Card statement upload:** PDF (`pdftotext`) and CSV parsing, keep only likely recurring lines, delete the
    original by default (FR-0-8, PV-3).
-4. **M1d Cancellation execution:** browser playbooks for the top 30 merchants (FR-1-10), Bland cancel call script with
-   AI disclosure (FR-1-11), email-cancel drafts handed to the user's approval flow (FR-1-12), evidence and 48-hour
+4. **M1d Cancellation execution:** browser playbooks for the top 30 merchants (FR-1-10), Bland cancel call script under the
+   Q3 honesty policy (FR-1-11; Q3 resolved 2026-10-22, D30: no proactive AI disclosure, truthful if asked, never
+   claims to be human), email-cancel drafts handed to the user's approval flow (FR-1-12), evidence and 48-hour
    confirmation watch -> `cancel_unconfirmed` (FR-1-13), manual fallback guide (FR-1-14), post-charge check
    (FR-1-15), ledger entries per the 5.1 savings rules. All executors subclass `GuardedExecutor`; tests use fakes.
 

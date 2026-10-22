@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | Q1 | Rocket Money ending pay-for-results negotiation on 11/2 (unverified) | Verify through official announcement/help center first; never cite unverified claims in product copy | Marketing only | No |
 | Q2 | Business model | Free beta for the MVP; ledger "verified" rules per spec 6.11 | `core/ledger.py` | No |
-| Q3 | Must Bland calls disclose AI identity? | Yes, always disclose; if refused, switch to a three-way call or user self-call with a script | M1 call script, `skills/money-saver-core` | No (default is workable; Charles should confirm before the first real call) |
+| Q3 | Must Bland calls disclose AI identity? | **Resolved by Charles, 2026-10-22 (D30):** calls do not proactively say they are an AI. If the other party directly asks, the caller answers truthfully and never claims to be human | `config/call_scripts/policy.json`, `core/call_policy.py`, `skills/money-saver-core` | No |
 | Q4 | Allow pre-authorized "cancel before trial ends"? | Allowed, with a 2-hour revoke window (FR-1-9) | `execute_not_before` in `core/action_gate.py` | No |
 | Q5 | May the bot actually cancel as negotiation leverage? | Not in the MVP; it may only say the user is considering cancelling | M5 | No |
 | Q6 | Change module order? | Keep the chapter 12 order | `docs/plan.md` | No |
@@ -17,8 +17,8 @@
 | Q11 | Who maintains merchant_registry? Review runtime additions? | Developer Bot maintains the top 150; runtime additions are `unverified` and need an extra warning before execution | `verification` field; every M0 seed entry is `unverified` and has no phone number | No for M0. For M1, verified cancel URLs/playbooks need checking against official pages (see B2) |
 | Q12 | Licensed agent for insurance quotes? | No; only point to official comparison/insurer sites, never fill licensed flows | M5 | No |
 
-**Result:** none of the 12 questions blocks M0 or M1 with the defaults above. Q3 and Q11 matter most for M1 and
-should be confirmed by Charles before any real call or live cancellation.
+**Result:** none of the 12 questions blocks M0 or M1 with the defaults above. Q3 was resolved by Charles on
+2026-10-22 (D30). Q11 is still open and must be confirmed by Charles before any live cancellation.
 
 ## Blockers for M1 acceptance (not in spec 13)
 - **B1 - real labelled samples.** M1 recall/precision (>= 90% / >= 85%) is defined on human-labelled samples. The repo
@@ -179,12 +179,34 @@ should be confirmed by Charles before any real call or live cancellation.
   - Undo (`stop_trial_auto_cancel`) accepts any stop or undo wording, because revoking is the safe direction.
     `取消` alone is ambiguous and does not count.
   - Pre-authorization is limited to the browser path. Store-billed, phone, and email cancellations are manual
-    steps in M1b. A bot-placed call needs an approved script and the Q3 decision. A bot-sent email needs its exact
-    draft approved.
+    steps in M1b. A bot-placed call needs an approved script that passes the Q3 policy (D30). Real calls arrive in M1d.
+    A bot-sent email needs its exact draft approved.
 - **D25 Routines as code.** R1, R3, R4, and R10 are plain functions in `routines/`, also exposed as MCP tools. They
   return texts for the user's own chat and never send, call, cancel, or start a run. Scheduling them as Grok Bot
-  routines is deploy configuration and is held for Charles's approval.
+  routines was held for Charles's approval. He approved it on 2026-10-22; see D31.
 - **Q11 (not decided here).** A cancel request for a merchant whose registry entry is not `verified` carries an
   "unverified" risk note (`modules/trials.py: WARN_UNVERIFIED_MERCHANTS`, TODO(Q11)). Who maintains the registry and
   how entries become verified is still Charles's decision.
 
+## Decisions by Charles (2026-10-22)
+- **D30 Call honesty (resolves Q3).** Calls do NOT proactively disclose that they are an AI. If the other party
+  directly asks whether they are talking to an AI (or a bot, a robot, a recording), the caller answers truthfully:
+  "Yes, I'm an AI assistant calling on behalf of <user>." It never claims to be human and never claims to be the user.
+  - `config/call_scripts/policy.json`: `proactive_ai_disclosure: false` (the default; it can be turned on) and
+    `if_asked_whether_ai: answer_truthfully`. `core/call_policy.py` accepts only `answer_truthfully` there and
+    rejects unknown keys, so no config can allow lying. `CallPolicy(truthful_if_asked=False)` raises.
+  - `validate_script` rejects script text that claims to be human, denies being an AI, or claims to be the account
+    holder. `build_call_instructions` produces the opening line and the honesty rules for every call prompt.
+  - No real calls are placed. Bland calls are still M1d work and still go through the confirmation gate.
+- **D31 Routines on by default.** R1 (daily scan, 05:30), R3 (reminder dispatch, hourly), R4 (trial guard, 09:00),
+  and R10 (request expiry, hourly) are enabled by default. Each time is in the user's time zone.
+  - The registry is `routines/schedule.py`. The `list_routines` tool returns what the bot registers as Grok Bot
+    scheduled tasks.
+  - A user can turn a routine off with `set_routine_enabled`. The setting is stored in
+    `notification_prefs.routines`, so the schema does not change. A missing setting means on. A disabled routine's
+    tool returns `skipped` if it still fires.
+  - Routines only read and post texts to the user's own chat. They never send to third parties, call, cancel, or
+    start an action run. Any cancellation still needs the user's explicit confirmation through the action gate.
+    Tests check this.
+- **Still open or deferred.** Q11 (who maintains the merchant registry) is still open. The accuracy test with real
+  labeled emails (B1) is deferred.

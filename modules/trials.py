@@ -10,7 +10,8 @@
   gate. Its ``execute_not_before`` is T-1 11:00 local. At T-1 09:00 the bot posts "cancelling in 2 hours, reply stop
   to undo". A run can only start once that warning has been out for 2 hours. "Stop" revokes the request (the undo).
   Pre-authorization only covers the browser path: phone and email cancellations always get a real-time
-  confirmation, because the call script (Q3) and the exact email have to be approved as they are.
+  confirmation, because the call script (which must pass the Q3 honesty policy, core/call_policy.py) and the exact
+  email have to be approved as they are.
 
 Nothing here executes a cancellation. ``trial_guard`` reports which approved requests are ready, and execution is
 M1d (behind the gate, stubbed in tests). Reminder texts are returned to the bot to post in the user's own chat.
@@ -221,8 +222,9 @@ class Trials:
                      "Save a full-page screenshot and the confirmation number as evidence"]
             executor = "browser"
         elif method in ("phone", "email"):
-            # Bot-placed calls and bot-sent emails come in M1d: a call needs an approved script (and the Q3
-            # AI-disclosure decision), and an email needs the exact draft approved. Until then this is manual.
+            # Bot-placed calls and bot-sent emails come in M1d: a call needs an approved script that passes the Q3
+            # honesty policy (D30, core/call_policy.py), and an email needs the exact draft approved. Until then this
+            # is manual.
             contact = m.get("support_phone") if method == "phone" else None
             steps = [f"Send you the exact steps to cancel {name} by {method}"
                      + (f" (registry phone {contact})" if contact else "") + ", with what to say or write",

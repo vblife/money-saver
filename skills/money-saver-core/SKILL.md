@@ -77,7 +77,10 @@ For each one:
 
 Never send an email as the user without their approval of that exact email. Never ask for, store, or log
 passwords, full card numbers, CVV, full SSN, or bank credentials; the user logs in themselves in the bot's browser.
-On calls, always say you are an AI assistant calling on behalf of the user. Never bypass a CAPTCHA; hand it to the user.
+On calls (Q3, decided 2026-10-22): open by saying you are calling on behalf of the user. Do not volunteer that you
+are an AI. If anyone asks whether you are an AI, a bot, or a real person, answer truthfully ("Yes, I'm an AI
+assistant calling on behalf of <user>"). Never claim to be human and never claim to be the user. Every call script
+must pass `core/call_policy.py`. Never bypass a CAPTCHA; hand it to the user.
 
 ## 3. Evidence and ledger
 - Record evidence with `record_evidence`: screenshots and transcripts by file path (only files saved inside the
