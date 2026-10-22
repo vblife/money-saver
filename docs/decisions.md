@@ -103,5 +103,9 @@ should be confirmed by Charles before any real call or live cancellation.
   channel is an amendment and needs re-confirmation (8.2: "switching to a phone call must be re-confirmed").
 - **D14 Evidence files.** `record_evidence` copies only regular files whose real path is inside an allowed evidence
   inbox (`MSB_EVIDENCE_INBOX`, default `$MSB_HOME/inbox`; a colon-separated list is allowed). Symlinks, paths that
-  resolve outside the inbox, and non-regular files are rejected, so the store cannot be used to collect secrets such
-  as `~/.ssh/id_rsa`.
+  resolve outside the inbox, non-regular files, and files with more than one hard link are rejected, so the store
+  cannot be used to collect secrets such as `~/.ssh/id_rsa`. To close the race between the check and the copy, the
+  file is opened with `O_NOFOLLOW`. The open descriptor is then re-checked with `fstat`: it must be a regular file with
+  `st_nlink == 1` and the same device and inode that were checked, and on Linux its `/proc/self/fd` path must be
+  inside the inbox. The copy is read from that descriptor (never by path again) into a new `0600` file, and is
+  hashed while copying.

@@ -113,3 +113,85 @@ def test_wipe_files(es, inbox, tmp_path):
     es.add_file("call_transcript", str(src), "run_1")
     es.wipe_files()
     assert not (tmp_path / "evidence").exists()
+
+
+# --- regression: hard links and check/copy races (re-review 4) ---------------------------------------
+def test_rejects_hardlink_to_outside_file(es, inbox, tmp_path):
+    outside = tmp_path / "secret.key"
+    outside.write_text("PRIVATE")
+    os.link(outside, inbox / "looks_fine.png")
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(inbox / "looks_fine.png"), "sub_x")
+    assert es.store.count("evidence") == 0
+
+
+def test_rejects_hardlink_even_inside_inbox(es, inbox):
+    (inbox / "a.png").write_bytes(b"x")
+    os.link(inbox / "a.png", inbox / "b.png")
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(inbox / "b.png"), "sub_x")
+
+
+def _swap_after_check(monkeypatch, es, swap):
+    original = es._check
+
+    def checked_then_swapped(path):
+        result = original(path)
+        swap()
+        return result
+    monkeypatch.setattr(es, "_check", checked_then_swapped)
+
+
+def test_race_swap_to_symlink_after_check_is_rejected(es, inbox, tmp_path, monkeypatch):
+    target, outside = inbox / "shot.png", tmp_path / "outside.txt"
+    target.write_bytes(b"png")
+    outside.write_text("SECRET")
+
+    def swap():
+        target.unlink()
+        os.symlink(outside, target)
+    _swap_after_check(monkeypatch, es, swap)
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(target), "sub_x")
+    assert es.store.count("evidence") == 0
+
+
+def test_race_swap_to_hardlink_after_check_is_rejected(es, inbox, tmp_path, monkeypatch):
+    target, outside = inbox / "shot.png", tmp_path / "outside.txt"
+    target.write_bytes(b"png")
+    outside.write_text("SECRET")
+
+    def swap():
+        target.unlink()
+        os.link(outside, target)
+    _swap_after_check(monkeypatch, es, swap)
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(target), "sub_x")
+
+
+def test_race_swap_to_other_file_after_check_is_rejected(es, inbox, monkeypatch):
+    target = inbox / "shot.png"
+    target.write_bytes(b"png")
+
+    def swap():
+        target.rename(inbox / "old.png")  # keep the old inode alive so the new file gets a new one
+        target.write_bytes(b"different file, new inode")
+    _swap_after_check(monkeypatch, es, swap)
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(target), "sub_x")
+
+
+def test_copy_is_made_from_opened_fd_and_hash_matches(es, inbox):
+    src = inbox / "receipt.pdf"
+    src.write_bytes(b"%PDF fake" * 1000)
+    ev = es.add_file("form_receipt", str(src), "clm_1")
+    with open(ev["path_or_ref"], "rb") as fh:
+        assert fh.read() == src.read_bytes()
+    assert es.verify(ev["id"])
+    assert oct(os.stat(ev["path_or_ref"]).st_mode & 0o777) == "0o600"
+
+
+def test_rejects_fifo(es, inbox):
+    os.mkfifo(inbox / "pipe")
+    with pytest.raises(EvidencePathError):
+        es.add_file("screenshot", str(inbox / "pipe"), "sub_x")
