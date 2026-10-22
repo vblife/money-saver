@@ -96,34 +96,64 @@ _STRIP_CHARS = ".!。！~～ \t\n\r"
 _SEPARATORS = re.compile(r"[\s,，、:：;；\-–—\"'“”‘’「」『』()（）\[\]【】]+")
 
 
+_CJK = "\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+_TOKEN = re.compile(rf"[{_CJK}]+|[^\s{_CJK}]+")
+
+
 def _normalize(message: str) -> str:
     text = unicodedata.normalize("NFKC", message).strip().lower()
-    text = _SEPARATORS.sub(" ", text).strip(_STRIP_CHARS)
-    return re.sub(r"(?<=[\u3400-\u9fff]) (?=[\u3400-\u9fff])", "", text).strip()
+    return _SEPARATORS.sub(" ", text).strip(_STRIP_CHARS)
+
+
+def _tokens(message: str) -> list[str]:
+    """Whitespace/punctuation-separated tokens, with an extra break between CJK and non-CJK runs
+    (so '确认ABCDEF' is ['确认', 'abcdef']). Space-separated CJK runs are never joined back together."""
+    return _TOKEN.findall(_normalize(message))
+
+
+def _parse_confirmation(message: str | None, codes: list[str] | tuple[str, ...]) -> tuple[str, list[str]] | None:
+    """Split a reply into (affirmative text, quoted codes), or None if it is not well formed.
+
+    Codes count only as whole tokens, and only as one block at the start or at the end of the reply.
+    Every other token must form the affirmative, which must be contiguous in the original reply:
+    '批 ABCDEF 准', 'confirm ABCDEF all' and '确认ABCDEF执行' are rejected."""
+    if not message or not isinstance(message, str) or not message.strip():
+        return None
+    if "?" in message or "？" in message:
+        return None
+    tokens = _tokens(message)
+    if not tokens or len(_normalize(message)) > 80:
+        return None
+    wanted = {c.lower() for c in codes if c}
+    is_code = [t in wanted for t in tokens]
+    lead = 0
+    while lead < len(tokens) and is_code[lead]:
+        lead += 1
+    trail = len(tokens)
+    while trail > lead and is_code[trail - 1]:
+        trail -= 1
+    words = tokens[lead:trail]
+    if not words or any(is_code[lead:trail]):
+        return None  # no affirmative, or a code splits the affirmative
+    if lead and trail < len(tokens):
+        return None  # codes on both sides of the affirmative
+    return " ".join(words), tokens[:lead] + tokens[trail:]
 
 
 def is_explicit_confirmation(message: str | None, codes: list[str] | tuple[str, ...] = ()) -> bool:
-    """True only if the whole reply is an allow-listed affirmative, optionally followed or preceded
-    by the request's confirmation code(s). Anything else - negations, questions, conditionals,
-    extra words, empty replies - is not a confirmation."""
-    if not message or not isinstance(message, str) or not message.strip():
-        return False
-    if "?" in message or "？" in message:
-        return False
-    text = _normalize(message)
-    if len(text) > 80:
-        return False
-    for code in codes:
-        if code:
-            text = re.sub(rf"(?<![a-z0-9]){re.escape(code.lower())}(?![a-z0-9])", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    text = re.sub(r"(?<=[\u3400-\u9fff]) (?=[\u3400-\u9fff])", "", text)
-    return text in AFFIRMATIVE_REPLIES
+    """True only if the whole reply is an allow-listed affirmative, optionally preceded or followed
+    by the request's confirmation code(s) as separate tokens. Anything else - negations, questions,
+    conditionals, extra words, a code inside the affirmative, empty replies - is not a confirmation."""
+    parsed = _parse_confirmation(message, codes)
+    return parsed is not None and parsed[0] in AFFIRMATIVE_REPLIES
 
 
 def _mentions_all_codes(message: str, codes: list[str]) -> bool:
-    text = _normalize(message)
-    return all(re.search(rf"(?<![a-z0-9]){re.escape(c.lower())}(?![a-z0-9])", text) for c in codes)
+    parsed = _parse_confirmation(message, codes)
+    if parsed is None or parsed[0] not in AFFIRMATIVE_REPLIES:
+        return False
+    quoted = set(parsed[1])
+    return bool(codes) and all(c and c.lower() in quoted for c in codes)
 
 
 def _check_aware(dt: Any, name: str) -> None:

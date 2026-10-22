@@ -73,7 +73,10 @@ should be confirmed by Charles before any real call or live cancellation.
   can claim, and the guarantees and limits are:
   - *Fail-closed wording.* The whole reply must be an allow-listed affirmative (`confirm`, `approve`, `确认`, `批准`,
     `同意`, ...) plus, optionally, the request's code. Negations, questions, conditionals, hedges, and any extra words
-    are rejected (8.2).
+    are rejected (8.2). The reply is split into tokens at spaces and punctuation, and also where CJK and Latin
+    text meet (so `确认ABCDEF` is two tokens). Space-separated CJK pieces are never joined back together. Codes count
+    only as whole tokens in one block at the start or at the end. The remaining tokens must be an allow-listed
+    affirmative exactly, so a code cannot split one: `批 ABCDEF 准`, `批 准` and `confirm ABCDEF all` are rejected.
   - *Binding to what was shown.* `create_action_request` renders one `confirmation_text` and a 6-letter
     `confirmation_code`, and stores the text and its SHA-256. An approval must quote the code or present the digest of
     that exact text. Amending re-renders both, so an approval of an old version cannot cover a changed plan. Codes

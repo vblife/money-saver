@@ -609,3 +609,47 @@ def test_preauth_within_45_days_works(gate, clock):
     ok(gate, req)
     clock.advance(days=30)
     assert gate.begin_execution(req["id"], "browser")
+
+
+# --- re-review 6: the code is a separate token and the affirmative is contiguous in the original reply ---
+
+SPLIT_AFFIRMATIVE = [
+    "批 ABCDEF 准", "批ABCDEF准", "确 ABCDEF 认", "确ABCDEF认", "同 ABCDEF 意", "我 ABCDEF 批准",
+    "批 准", "确 认", "批 准 ABCDEF", "确 认 ABCDEF", "ABCDEF 批 准",
+    "confirm ABCDEF all", "i ABCDEF confirm", "yes ABCDEF confirm", "con ABCDEF firm", "conABCDEFfirm",
+    "确认ABCDEF执行", "确认 ABCDEF 全部", "ABCDEF confirm ABCDEF", "ABCDEF 确认 ABCDEF",
+    "confirmABCDEF", "ABCDEFconfirm", "confirm ABCDEFG", "confirm XABCDEF", "confirm ABCDE",
+    "confirm ABCDEF ZZZZZZ", "确认 ABCDEF 不",
+]
+
+
+@pytest.mark.parametrize("reply", SPLIT_AFFIRMATIVE)
+def test_code_must_not_split_or_join_the_affirmative(reply):
+    assert not is_explicit_confirmation(reply, ["ABCDEF"])
+
+
+@pytest.mark.parametrize("reply", [
+    "确认ABCDEF", "确认 ABCDEF", "ABCDEF确认", "ABCDEF 确认", "批准 ABCDEF", "批准ABCDEF", "我确认：ABCDEF",
+    "确认执行 ABCDEF", "confirm ABCDEF", "ABCDEF confirm", "Confirm: ABCDEF", "I confirm ABCDEF.", "批准 abcdef",
+])
+def test_code_as_separate_token_still_confirms(reply):
+    assert is_explicit_confirmation(reply, ["ABCDEF"])
+
+
+def test_split_chinese_affirmative_cannot_approve_a_request(gate):
+    req = gate.create(action_type="cancel_subscription", target_ref="sub_x", summary="Cancel X", plan_steps=["a"])
+    code = req["confirmation_code"]
+    for msg in (f"批 {code} 准", f"确 {code} 认", f"批{code}准", "批 准"):
+        with pytest.raises(NotExplicitConfirmationError):
+            gate.confirm(req["id"], msg, shown_text_sha256=req["confirmation_sha256"])
+    assert gate.get(req["id"])["status"] == "pending_user"
+    assert gate.confirm(req["id"], f"批准 {code}")["status"] == "approved"
+
+
+def test_batch_codes_must_be_one_block_at_an_end():
+    codes = ["AAAAAA", "BBBBBB"]
+    assert is_explicit_confirmation("confirm AAAAAA BBBBBB", codes)
+    assert is_explicit_confirmation("AAAAAA BBBBBB 全部确认", codes)
+    assert not is_explicit_confirmation("AAAAAA confirm BBBBBB", codes)
+    assert not is_explicit_confirmation("全部 AAAAAA 确认 BBBBBB", codes)
+    assert not is_explicit_confirmation("confirm AAAAAA all BBBBBB", codes)
