@@ -1,0 +1,1363 @@
+{
+ "version": 1,
+ "note": "MVP seed (M0): 50 subscription/retail merchants plus 4 billing aggregators. All entries are 'unverified' until a human or the Developer Bot checks the official source (Q11). Phone numbers are intentionally empty until verified.",
+ "merchants": [
+  {
+   "id": "apple",
+   "name": "Apple App Store",
+   "aliases": [
+    "App Store",
+    "Apple Inc",
+    "iTunes",
+    "Apple Services"
+   ],
+   "email_domains": [
+    "apple.com",
+    "email.apple.com",
+    "itunes.com"
+   ],
+   "category": "aggregator",
+   "cancel_method": "app_store",
+   "cancel_url": "https://apps.apple.com/account/subscriptions",
+   "support_phone": null,
+   "cancel_notes": "Subscriptions billed by Apple are cancelled in the user's Apple account settings.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "google_play",
+   "name": "Google Play",
+   "aliases": [
+    "Google Play",
+    "Google Play Store",
+    "Google Payments"
+   ],
+   "email_domains": [
+    "google.com",
+    "play.google.com"
+   ],
+   "category": "aggregator",
+   "cancel_method": "google_play",
+   "cancel_url": "https://play.google.com/store/account/subscriptions",
+   "support_phone": null,
+   "cancel_notes": "Subscriptions billed by Google Play are cancelled in Google Play.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "paypal",
+   "name": "PayPal",
+   "aliases": [
+    "PayPal",
+    "PayPal Inc"
+   ],
+   "email_domains": [
+    "paypal.com"
+   ],
+   "category": "aggregator",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "Recurring PayPal payments are managed under automatic payments; the merchant may also need to be cancelled.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "stripe",
+   "name": "Stripe",
+   "aliases": [
+    "Stripe"
+   ],
+   "email_domains": [
+    "stripe.com"
+   ],
+   "category": "aggregator",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "Stripe is a processor; cancel with the merchant named on the receipt.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "netflix",
+   "name": "Netflix",
+   "aliases": [
+    "Netflix Inc",
+    "Netflix.com",
+    "NFLX"
+   ],
+   "email_domains": [
+    "netflix.com",
+    "mailer.netflix.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": "https://www.netflix.com/cancelplan",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "hulu",
+   "name": "Hulu",
+   "aliases": [
+    "Hulu LLC",
+    "Hulu.com"
+   ],
+   "email_domains": [
+    "hulu.com",
+    "hulumail.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": "https://secure.hulu.com/account",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "disney_plus",
+   "name": "Disney+",
+   "aliases": [
+    "Disney Plus",
+    "Disney+",
+    "DisneyPlus"
+   ],
+   "email_domains": [
+    "disneyplus.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": "https://www.disneyplus.com/account",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "max",
+   "name": "Max",
+   "aliases": [
+    "HBO Max",
+    "Max",
+    "HBO"
+   ],
+   "email_domains": [
+    "max.com",
+    "hbomax.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "paramount_plus",
+   "name": "Paramount+",
+   "aliases": [
+    "Paramount Plus",
+    "Paramount+"
+   ],
+   "email_domains": [
+    "paramountplus.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": "https://www.paramountplus.com/account/",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "peacock",
+   "name": "Peacock",
+   "aliases": [
+    "Peacock TV",
+    "Peacock Premium"
+   ],
+   "email_domains": [
+    "peacocktv.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": "https://www.peacocktv.com/account",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "apple_tv_plus",
+   "name": "Apple TV+",
+   "aliases": [
+    "Apple TV+",
+    "Apple TV Plus"
+   ],
+   "email_domains": [],
+   "category": "streaming_video",
+   "cancel_method": "app_store",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "Usually billed through Apple.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": "apple",
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "youtube_premium",
+   "name": "YouTube Premium",
+   "aliases": [
+    "YouTube Premium",
+    "YouTube Music Premium"
+   ],
+   "email_domains": [
+    "youtube.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": "https://www.youtube.com/paid_memberships",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "youtube_tv",
+   "name": "YouTube TV",
+   "aliases": [
+    "YouTube TV"
+   ],
+   "email_domains": [],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": "youtube_premium",
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "espn_plus",
+   "name": "ESPN+",
+   "aliases": [
+    "ESPN Plus",
+    "ESPN+"
+   ],
+   "email_domains": [
+    "espnplus.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "sling_tv",
+   "name": "Sling TV",
+   "aliases": [
+    "Sling",
+    "Sling TV"
+   ],
+   "email_domains": [
+    "sling.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "fubo",
+   "name": "Fubo",
+   "aliases": [
+    "fuboTV",
+    "Fubo TV"
+   ],
+   "email_domains": [
+    "fubo.tv"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "crunchyroll",
+   "name": "Crunchyroll",
+   "aliases": [
+    "Crunchyroll"
+   ],
+   "email_domains": [
+    "crunchyroll.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "starz",
+   "name": "Starz",
+   "aliases": [
+    "STARZ"
+   ],
+   "email_domains": [
+    "starz.com"
+   ],
+   "category": "streaming_video",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "spotify",
+   "name": "Spotify",
+   "aliases": [
+    "Spotify Premium",
+    "Spotify AB",
+    "Spotify USA"
+   ],
+   "email_domains": [
+    "spotify.com"
+   ],
+   "category": "streaming_music",
+   "cancel_method": "web",
+   "cancel_url": "https://www.spotify.com/account/subscription/",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "apple_music",
+   "name": "Apple Music",
+   "aliases": [
+    "Apple Music"
+   ],
+   "email_domains": [],
+   "category": "streaming_music",
+   "cancel_method": "app_store",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": "apple",
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "amazon_music",
+   "name": "Amazon Music Unlimited",
+   "aliases": [
+    "Amazon Music",
+    "Amazon Music Unlimited"
+   ],
+   "email_domains": [],
+   "category": "streaming_music",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": "amazon",
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "pandora",
+   "name": "Pandora",
+   "aliases": [
+    "Pandora Plus",
+    "Pandora Premium"
+   ],
+   "email_domains": [
+    "pandora.com"
+   ],
+   "category": "streaming_music",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "siriusxm",
+   "name": "SiriusXM",
+   "aliases": [
+    "Sirius XM",
+    "SiriusXM Radio"
+   ],
+   "email_domains": [
+    "siriusxm.com"
+   ],
+   "category": "streaming_music",
+   "cancel_method": "phone",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "Historically phone or chat cancellation; verify current method.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "audible",
+   "name": "Audible",
+   "aliases": [
+    "Audible Inc",
+    "Audible Premium Plus"
+   ],
+   "email_domains": [
+    "audible.com"
+   ],
+   "category": "audiobooks",
+   "cancel_method": "web",
+   "cancel_url": "https://www.audible.com/account",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "icloud",
+   "name": "iCloud+",
+   "aliases": [
+    "iCloud",
+    "iCloud+",
+    "iCloud Storage"
+   ],
+   "email_domains": [],
+   "category": "cloud_storage",
+   "cancel_method": "app_store",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": "apple",
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "google_one",
+   "name": "Google One",
+   "aliases": [
+    "Google One",
+    "Google Storage"
+   ],
+   "email_domains": [],
+   "category": "cloud_storage",
+   "cancel_method": "google_play",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": "google_play",
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "dropbox",
+   "name": "Dropbox",
+   "aliases": [
+    "Dropbox Plus",
+    "Dropbox Inc"
+   ],
+   "email_domains": [
+    "dropbox.com",
+    "dropboxmail.com"
+   ],
+   "category": "cloud_storage",
+   "cancel_method": "web",
+   "cancel_url": "https://www.dropbox.com/account/plan",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "microsoft_365",
+   "name": "Microsoft 365",
+   "aliases": [
+    "Microsoft 365",
+    "Office 365",
+    "Microsoft Corporation",
+    "MSFT"
+   ],
+   "email_domains": [
+    "microsoft.com",
+    "email.microsoft.com"
+   ],
+   "category": "software",
+   "cancel_method": "web",
+   "cancel_url": "https://account.microsoft.com/services",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "adobe",
+   "name": "Adobe",
+   "aliases": [
+    "Adobe Creative Cloud",
+    "Adobe Inc",
+    "Adobe Systems"
+   ],
+   "email_domains": [
+    "adobe.com",
+    "mail.adobe.com"
+   ],
+   "category": "software",
+   "cancel_method": "web",
+   "cancel_url": "https://account.adobe.com/plans",
+   "support_phone": null,
+   "cancel_notes": "Annual plans billed monthly may carry an early termination fee; list it in risk_notes.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "openai",
+   "name": "ChatGPT Plus",
+   "aliases": [
+    "OpenAI",
+    "ChatGPT Plus",
+    "ChatGPT"
+   ],
+   "email_domains": [
+    "openai.com"
+   ],
+   "category": "software",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "grammarly",
+   "name": "Grammarly",
+   "aliases": [
+    "Grammarly Premium"
+   ],
+   "email_domains": [
+    "grammarly.com"
+   ],
+   "category": "software",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "canva",
+   "name": "Canva",
+   "aliases": [
+    "Canva Pro"
+   ],
+   "email_domains": [
+    "canva.com"
+   ],
+   "category": "software",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "nordvpn",
+   "name": "NordVPN",
+   "aliases": [
+    "NordVPN",
+    "Nord Security"
+   ],
+   "email_domains": [
+    "nordvpn.com"
+   ],
+   "category": "vpn",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "expressvpn",
+   "name": "ExpressVPN",
+   "aliases": [
+    "ExpressVPN"
+   ],
+   "email_domains": [
+    "expressvpn.com"
+   ],
+   "category": "vpn",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "nytimes",
+   "name": "The New York Times",
+   "aliases": [
+    "New York Times",
+    "NYTimes",
+    "NYT"
+   ],
+   "email_domains": [
+    "nytimes.com"
+   ],
+   "category": "news",
+   "cancel_method": "web",
+   "cancel_url": "https://myaccount.nytimes.com/",
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "wsj",
+   "name": "The Wall Street Journal",
+   "aliases": [
+    "Wall Street Journal",
+    "WSJ",
+    "Dow Jones"
+   ],
+   "email_domains": [
+    "wsj.com",
+    "dowjones.com"
+   ],
+   "category": "news",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "washington_post",
+   "name": "The Washington Post",
+   "aliases": [
+    "Washington Post",
+    "WaPo"
+   ],
+   "email_domains": [
+    "washingtonpost.com"
+   ],
+   "category": "news",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "peloton",
+   "name": "Peloton",
+   "aliases": [
+    "Peloton App",
+    "Peloton Interactive",
+    "Peloton All-Access"
+   ],
+   "email_domains": [
+    "onepeloton.com"
+   ],
+   "category": "fitness",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "planet_fitness",
+   "name": "Planet Fitness",
+   "aliases": [
+    "Planet Fitness",
+    "PF Black Card"
+   ],
+   "email_domains": [
+    "planetfitness.com"
+   ],
+   "category": "gym",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "Gym memberships may require in-person or written cancellation; verify per club.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "calm",
+   "name": "Calm",
+   "aliases": [
+    "Calm Premium",
+    "Calm.com"
+   ],
+   "email_domains": [
+    "calm.com"
+   ],
+   "category": "wellness",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "headspace",
+   "name": "Headspace",
+   "aliases": [
+    "Headspace Plus"
+   ],
+   "email_domains": [
+    "headspace.com"
+   ],
+   "category": "wellness",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "strava",
+   "name": "Strava",
+   "aliases": [
+    "Strava Subscription"
+   ],
+   "email_domains": [
+    "strava.com"
+   ],
+   "category": "fitness",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "noom",
+   "name": "Noom",
+   "aliases": [
+    "Noom Inc"
+   ],
+   "email_domains": [
+    "noom.com"
+   ],
+   "category": "wellness",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "doordash",
+   "name": "DoorDash",
+   "aliases": [
+    "DashPass",
+    "DoorDash"
+   ],
+   "email_domains": [
+    "doordash.com"
+   ],
+   "category": "food_delivery",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "uber",
+   "name": "Uber One",
+   "aliases": [
+    "Uber One",
+    "Uber Eats",
+    "Uber"
+   ],
+   "email_domains": [
+    "uber.com"
+   ],
+   "category": "food_delivery",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "instacart",
+   "name": "Instacart+",
+   "aliases": [
+    "Instacart",
+    "Instacart+"
+   ],
+   "email_domains": [
+    "instacart.com"
+   ],
+   "category": "food_delivery",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "hellofresh",
+   "name": "HelloFresh",
+   "aliases": [
+    "HelloFresh"
+   ],
+   "email_domains": [
+    "hellofresh.com"
+   ],
+   "category": "meal_kit",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "amazon",
+   "name": "Amazon",
+   "aliases": [
+    "Amazon.com",
+    "Amazon Prime",
+    "AMZN",
+    "Amazon Mktp"
+   ],
+   "email_domains": [
+    "amazon.com"
+   ],
+   "category": "retail",
+   "cancel_method": "web",
+   "cancel_url": "https://www.amazon.com/mc",
+   "support_phone": null,
+   "cancel_notes": "Prime membership is managed on the Prime membership page.",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "walmart",
+   "name": "Walmart",
+   "aliases": [
+    "Walmart+",
+    "Walmart.com",
+    "Wal-Mart"
+   ],
+   "email_domains": [
+    "walmart.com"
+   ],
+   "category": "retail",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "costco",
+   "name": "Costco",
+   "aliases": [
+    "Costco Wholesale",
+    "Costco.com"
+   ],
+   "email_domains": [
+    "costco.com"
+   ],
+   "category": "retail",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "target",
+   "name": "Target",
+   "aliases": [
+    "Target.com",
+    "Target Circle 360"
+   ],
+   "email_domains": [
+    "target.com"
+   ],
+   "category": "retail",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "best_buy",
+   "name": "Best Buy",
+   "aliases": [
+    "BestBuy",
+    "Best Buy Co",
+    "My Best Buy"
+   ],
+   "email_domains": [
+    "bestbuy.com",
+    "emailinfo.bestbuy.com"
+   ],
+   "category": "retail",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "linkedin_premium",
+   "name": "LinkedIn Premium",
+   "aliases": [
+    "LinkedIn Premium",
+    "LinkedIn"
+   ],
+   "email_domains": [
+    "linkedin.com"
+   ],
+   "category": "professional",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  },
+  {
+   "id": "duolingo",
+   "name": "Duolingo",
+   "aliases": [
+    "Duolingo Super",
+    "Duolingo Plus"
+   ],
+   "email_domains": [
+    "duolingo.com"
+   ],
+   "category": "education",
+   "cancel_method": "web",
+   "cancel_url": null,
+   "support_phone": null,
+   "cancel_notes": "",
+   "retention_offer_known": false,
+   "price_adjust_policy": null,
+   "return_policy": null,
+   "late_delivery_policy": null,
+   "fare_rules": null,
+   "billed_via_parent": null,
+   "verification": "unverified",
+   "updated_at": "2026-10-19",
+   "source_urls": []
+  }
+ ]
+}

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "note": "FR-0-1 / FR-1-1 query templates. Targeted queries only (PV-2): never download the whole mailbox. The scanner appends after:/before: bounds.",
+  "initial_lookback_months": 13,
+  "queries": [
+    {"id": "subscriptions", "modules": ["subscriptions"], "q": "subject:(receipt OR invoice OR \"your subscription\" OR renewal OR \"free trial\" OR \"trial ends\" OR membership OR \"auto-renew\")"},
+    {"id": "aggregators", "modules": ["subscriptions"], "q": "from:(apple.com OR google.com OR paypal.com OR stripe.com) subject:(receipt OR invoice OR subscription OR payment)"},
+    {"id": "orders", "modules": ["post_purchase"], "q": "subject:(\"order confirmation\" OR \"your order\" OR \"order #\" OR shipped OR \"out for delivery\" OR delivered OR delayed)"},
+    {"id": "refunds", "modules": ["recovery", "post_purchase"], "q": "subject:(refund OR \"return received\" OR \"credit issued\" OR \"price adjustment\")"},
+    {"id": "travel", "modules": ["travel"], "q": "subject:(itinerary OR \"flight confirmation\" OR \"reservation confirmation\" OR \"booking confirmation\" OR \"schedule change\" OR \"flight delay\" OR \"flight cancellation\")"},
+    {"id": "bills", "modules": ["bills"], "q": "subject:(\"your bill\" OR statement OR \"bill is ready\" OR \"payment due\" OR \"policy renewal\" OR declarations)"},
+    {"id": "gift_cards_loyalty", "modules": ["recovery"], "q": "subject:(\"gift card\" OR \"points expire\" OR \"miles expire\" OR \"points balance\" OR \"account summary\" OR \"rewards statement\")"},
+    {"id": "settlements", "modules": ["recovery"], "q": "subject:(settlement OR \"class action\" OR \"claim form\" OR \"notice of proposed\")"}
+  ]
+}
