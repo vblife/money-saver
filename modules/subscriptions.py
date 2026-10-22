@@ -104,6 +104,48 @@ def _iso_date(value: Any) -> date | None:
         return None
 
 
+# FR-1-7: with no stated end date or length, assume the shortest common trial (7 of 7/14/30 days) so that
+# reminders come early rather than after a charge, and mark it low confidence.
+DEFAULT_TRIAL_DAYS = 7
+LOW_CONFIDENCE = 0.45
+
+
+def account_of(msg: dict[str, Any]) -> str:
+    """The account a message is about: a declared household address it was sent to (PV-7), else the mailbox."""
+    return (msg.get("extracted") or {}).get("household_recipient") or msg["gmail_account"]
+
+
+def trial_end_info(msg: dict[str, Any] | None, tz: ZoneInfo) -> tuple[date | None, str | None]:
+    """(trial end, basis). The basis is 'stated_date', 'stated_length' (start + N days), or 'default_length'."""
+    if not msg:
+        return None, None
+    stated = _iso_date(_val(msg, "trial_end_date"))
+    if stated:
+        return stated, "stated_date"
+    try:
+        start = parse_iso(msg["received_at"]).astimezone(tz).date() if msg.get("received_at") else None
+    except ValueError:
+        start = None
+    if start is None:
+        return None, None
+    days = _val(msg, "trial_days")
+    if isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= 90:
+        return start + timedelta(days=days), "stated_length"
+    return start + timedelta(days=DEFAULT_TRIAL_DAYS), "default_length"
+
+
+def trial_basis(store: Store, sub: dict[str, Any]) -> str | None:
+    """Basis of a stored trial end date, re-derived from the newest trial email of the subscription."""
+    if sub.get("status") != "trial":
+        return None
+    ids = set(sub.get("source_message_ids") or [])
+    trials = [m for m in store.find("source_messages", {"category": "trial_start"}, order_by="received_at DESC")
+              if m["message_id"] in ids]
+    if not trials:
+        return None
+    return trial_end_info(trials[0], _tz(store.get_user().get("timezone")))[1]
+
+
 class SubscriptionInventory:
     def __init__(self, store: Store, resolver: MerchantResolver | None = None):
         self.store = store
@@ -162,13 +204,13 @@ class SubscriptionInventory:
         usage: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for msg in msgs:
             if _val(msg, "usage_signal") in ("active", "likely_unused") and msg.get("merchant_id"):
-                usage.setdefault((msg["merchant_id"], msg["gmail_account"]), []).append(msg)
+                usage.setdefault((msg["merchant_id"], account_of(msg)), []).append(msg)
             if msg["category"] not in INVENTORY_CATEGORIES:
                 continue
             if not msg.get("merchant_id"):
                 unresolved.append(msg["message_id"])
                 continue
-            key = (msg["merchant_id"], msg["gmail_account"], self.billing_channel(msg))
+            key = (msg["merchant_id"], account_of(msg), self.billing_channel(msg))
             groups.setdefault(key, []).append(msg)
 
         result = {"created": [], "updated": [], "unchanged": [], "charges_added": 0, "unresolved_message_ids": unresolved}
@@ -226,7 +268,7 @@ class SubscriptionInventory:
         latest_trial = max(trials, key=lambda x: x.get("received_at") or "") if trials else None
         trial_day = self._local_date(latest_trial.get("received_at"), tz) if latest_trial else None
         is_trial = bool(latest_trial) and (last_charge is None or (trial_day is not None and last_charge < trial_day))
-        trial_end = _iso_date(_val(latest_trial, "trial_end_date")) if is_trial else None
+        trial_end, trial_basis = trial_end_info(latest_trial, tz) if is_trial else (None, None)
         trial_converts = _val(latest_trial, "amount_cents") if is_trial else None
 
         # amount: latest charge, else the announced renewal / trial conversion amount
@@ -281,6 +323,8 @@ class SubscriptionInventory:
             conf *= 0.9
         if self.resolver.get(merchant_id) and self.resolver.get(merchant_id)["category"] == "aggregator":
             conf *= 0.7
+        if trial_basis == "default_length":
+            conf = min(conf, LOW_CONFIDENCE)   # FR-1-7: guessed trial length -> ask the user to check
         sources = sorted(set((existing or {}).get("source") or []) | {"gmail"})
         derived = {
             "display_name": self._display_name(merchant_id, group), "amount_cents": amount, "currency": currency,

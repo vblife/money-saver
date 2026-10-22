@@ -6,11 +6,16 @@ import pytest
 from core.action_gate import (ALLOWED_EXECUTORS, ActionGate, ActionNotAllowedError, GateError,
                               InvalidTransitionError, NotApprovedError, NotExplicitConfirmationError,
                               is_explicit_confirmation, sha256_text)
+from core.call_policy import build_call_script, save_call_identity
 from core.evidence import EvidenceStore
 from core.privacy import ForbiddenDataError
 from executors.base import GuardedExecutor
 
 DRAFT = "Hello, I am an AI assistant calling on behalf of Alex to cancel the subscription."
+# Call scripts must be built by core.call_policy (D30) for the name in constraints.call_user_name.
+CALL_DRAFT = build_call_script("Alex", ["Ask to cancel the subscription on this account.",
+                                        "Ask for a cancellation confirmation number."])
+CALL_C = {"call_user_name": "Alex"}
 
 
 def make(gate, **kw):
@@ -18,6 +23,12 @@ def make(gate, **kw):
                 plan_steps=["Open hulu.com account page", "Click Cancel", "Decline retention offers", "Screenshot confirmation"],
                 expected_saving_cents=1799, risk_notes="Access continues until 10/24")
     args.update(kw)
+    executor = args.get("executor") or (ALLOWED_EXECUTORS.get(args["action_type"]) or ("",))[0]
+    if executor == "bland_call":
+        save_call_identity(gate.store, "Alex")   # the gate binds call scripts to the user's saved name
+    if executor == "bland_call" and args.get("draft_content") == DRAFT:
+        args["draft_content"] = CALL_DRAFT
+        args["constraints"] = {**CALL_C, **(args.get("constraints") or {})}
     return gate.create(**args)
 
 
@@ -302,8 +313,10 @@ def test_default_executor_per_type(gate):
 
 
 def test_switching_channel_requires_reconfirmation(gate):
+    save_call_identity(gate.store, "Alex")
     req = ok(gate, make(gate))
-    amended = gate.amend(req["id"], {"executor": "bland_call", "draft_content": DRAFT}, "web cancel failed")
+    amended = gate.amend(req["id"], {"executor": "bland_call", "draft_content": CALL_DRAFT, "constraints": CALL_C},
+                         "web cancel failed")
     assert amended["status"] == "pending_user"
     with pytest.raises(NotApprovedError):
         gate.begin_execution(req["id"], "bland_call")
@@ -437,7 +450,7 @@ def test_amend_cannot_remove_required_draft(gate, atype):
     for empty in ("", "   ", None):
         with pytest.raises(GateError):
             gate.amend(req["id"], {"draft_content": empty}, "drop draft")
-    assert gate.get(req["id"])["draft_content"] == DRAFT
+    assert gate.get(req["id"])["draft_content"] == (CALL_DRAFT if atype != "send_email" else DRAFT)
 
 
 def test_amend_cannot_switch_to_email_without_draft(gate):
@@ -500,7 +513,8 @@ def test_email_and_calls_need_a_draft(gate, atype):
     with pytest.raises(GateError):
         make(gate, action_type=atype)
     req = make(gate, action_type=atype, draft_content=DRAFT)
-    assert DRAFT in req["confirmation_text"]  # the user sees the exact text
+    for line in req["draft_content"].splitlines():  # the user sees the exact text
+        assert f"| {line}" in req["confirmation_text"]
 
 
 def test_cancel_via_email_needs_a_draft(gate):

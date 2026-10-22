@@ -181,3 +181,69 @@ def test_stdio_card_statement_import(tmp_path):
         assert "GROCERY" not in json.dumps(listing)
     finally:
         c.close()
+
+
+def test_stdio_trial_flow_needs_confirmation(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    end = (datetime.now(timezone.utc) + timedelta(days=10)).date()
+    c = Client(tmp_path)
+    try:
+        c.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        names = {t["name"] for t in c.rpc("tools/list")["result"]["tools"]}
+        assert {"refresh_after_scan", "detect_duplicates", "dispatch_reminders", "run_trial_guard",
+                "respond_to_trial_reminder", "preauthorize_trial_cancel", "stop_trial_auto_cancel"} <= names
+        c.tool("ingest_messages", account="alex@example.com", messages=[{
+            "id": "t1", "from": "Peacock <hello@peacocktv.com>", "subject": "Welcome to your Peacock free trial",
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "body": f"Your free trial has started. Your trial ends on {end.strftime('%b %d, %Y')}. Then $7.99/month."}])
+        out = c.tool("refresh_after_scan")["structuredContent"]
+        assert len(out["inventory"]["created"]) == 1 and len(out["reminders"]["scheduled"]) == 2
+        sub_id = out["inventory"]["created"][0]
+        pre = c.tool("preauthorize_trial_cancel", subscription_id=sub_id)["structuredContent"]
+        assert pre["request"]["status"] == "pending_user" and "confirm " in pre["confirmation_text"]
+        guard = c.tool("run_trial_guard")["structuredContent"]
+        assert guard["ready_to_execute"] == [] and guard["warnings"] == []
+        bad = c.tool("stop_trial_auto_cancel", subscription_id=sub_id, user_message="sounds good")
+        assert bad["isError"]
+        stop = c.tool("stop_trial_auto_cancel", subscription_id=sub_id, user_message="stop")["structuredContent"]
+        assert stop["revoked_request_ids"] == [pre["request"]["id"]]
+        cancel = c.tool("respond_to_trial_reminder", subscription_id=sub_id, choice="cancel")["structuredContent"]
+        assert cancel["request"]["status"] == "pending_user"
+        started = c.tool("start_action_run", request_id=cancel["request"]["id"], executor="browser")
+        assert started["isError"]
+        dup = c.tool("detect_duplicates")["structuredContent"]
+        assert dup["text"] == "No duplicate subscriptions found."
+        exp = c.tool("expire_action_requests")["structuredContent"]
+        assert exp == {"expired": [], "messages": []}
+    finally:
+        c.close()
+
+
+def test_m1b_and_m1c_tools_coexist(tmp_path):
+    """After merging main (M1b) into M1c: both feature sets are listed, documented, and work together."""
+    import os
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    f = inbox / "stmt.csv"
+    f.write_text("Date,Description,Amount\n2026-09-03,SPOTIFY USA,11.99\n2026-10-03,SPOTIFY USA,11.99\n")
+    c = Client(tmp_path)
+    try:
+        c.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        names = {t["name"] for t in c.rpc("tools/list")["result"]["tools"]}
+        both = {"import_card_statement", "refresh_after_scan", "detect_duplicates", "dispatch_reminders",
+                "run_trial_guard", "respond_to_trial_reminder", "preauthorize_trial_cancel", "stop_trial_auto_cancel",
+                "list_routines", "set_routine_enabled", "set_call_identity", "build_call_script"}
+        assert both <= names
+        assert c.tool("import_card_statement", path=str(f))["structuredContent"]["kept"] == 2
+        # the R1 refresh keeps the statement-only subscription and finds no duplicate in it
+        c.tool("refresh_after_scan")
+        listing = c.tool("list_subscriptions")["structuredContent"]["subscriptions"]
+        assert [s["display_name"] for s in listing] == ["Spotify"]
+        assert c.tool("detect_duplicates")["structuredContent"]["text"] == "No duplicate subscriptions found."
+    finally:
+        c.close()
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    skill = open(os.path.join(root, "skills", "money-saver-core", "SKILL.md"), encoding="utf-8").read()
+    for tool in ("import_card_statement", "refresh_after_scan", "stop_trial_auto_cancel", "build_call_script",
+                 "set_call_identity", "list_routines"):
+        assert f"`{tool}`" in skill, tool
