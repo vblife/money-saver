@@ -7,7 +7,8 @@ These rules apply to every coding agent (Grok Bot, Cursor, or any other) working
 - Never merge your own PR. The reviewer bot merges automatically once tests pass and its review is clean.
 - Auto-merge does not apply to risky changes. These need Charles's explicit approval before merge:
   - anything touching secrets or credentials;
-  - deploy config (connector/launch config, routine schedules that run for real);
+  - deploy config (connector/launch config, routine schedules that run for real). Charles approved R1, R3, R4 and
+    R10 on by default on 2026-10-22 (`routines/schedule.py`). New routines or changes to them still need approval;
   - production data paths and DB schema migrations (e.g. `msb.db` under the bot's persistent directory);
   - anything that sends messages, spends money, or cancels services for real (email sending, Bland calls, browser
     playbooks that submit cancellations, claims, rebookings, or forms).

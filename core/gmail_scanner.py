@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Protocol
 
@@ -74,6 +75,7 @@ def build_scan_plan(store: Store, account: str, now: datetime | None = None,
 def ingest_messages(store: Store, account: str, messages: list[dict[str, Any]],
                     classifier: Classifier | None = None) -> dict[str, Any]:
     classifier = classifier or Classifier()
+    household_emails = [e.lower() for e in (store.get_user().get("household_emails") or []) if isinstance(e, str)]
     created, skipped, review = [], [], []
     for msg in messages:
         mid = str(msg.get("id") or msg.get("message_id") or "")
@@ -96,18 +98,35 @@ def ingest_messages(store: Store, account: str, messages: list[dict[str, Any]],
             except ExtractionSchemaError:
                 confidence = min(confidence, 0.49)  # 7.6: failed schema -> needs user review
         needs_review = confidence < 0.6
+        extracted = {"fields": _redact_fields(fields), "snippet": privacy.redact(body)[:SNIPPET_CHARS]}
+        household = _household_recipient(msg.get("to"), household_emails)
+        if household:
+            extracted["household_recipient"] = household
         store.insert("source_messages", {
             "gmail_account": account, "message_id": mid, "thread_id": msg.get("thread_id"),
             "from_addr": msg.get("from"), "subject": privacy.redact(subject)[:300],
             "received_at": received, "category": result.category, "merchant_id": result.merchant_id,
             "confidence": round(confidence, 3), "needs_review": needs_review,
-            "extracted": {"fields": _redact_fields(fields), "snippet": privacy.redact(body)[:SNIPPET_CHARS]},
+            "extracted": extracted,
         })
         created.append({"message_id": mid, **result.as_dict(), "confidence": round(confidence, 3),
                         "needs_review": needs_review})
         if needs_review:
             review.append(mid)
     return {"ingested": len(created), "skipped_existing": len(skipped), "needs_review": review, "results": created}
+
+
+def _household_recipient(to: Any, household: list[str]) -> str | None:
+    """FR-1-6(c) / PV-7: only a declared household address is kept, and only when this mail was sent to it.
+    Other recipients are never stored, and other people's mailboxes are never read."""
+    if not to or not household:
+        return None
+    text = " ".join(to) if isinstance(to, list) else str(to)
+    found = {m.lower() for m in re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+", text)}
+    for addr in household:
+        if addr in found:
+            return addr
+    return None
 
 
 def _redact_fields(fields: dict[str, Any]) -> dict[str, Any]:

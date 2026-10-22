@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | Q1 | Rocket Money ending pay-for-results negotiation on 11/2 (unverified) | Verify through official announcement/help center first; never cite unverified claims in product copy | Marketing only | No |
 | Q2 | Business model | Free beta for the MVP; ledger "verified" rules per spec 6.11 | `core/ledger.py` | No |
-| Q3 | Must Bland calls disclose AI identity? | Yes, always disclose; if refused, switch to a three-way call or user self-call with a script | M1 call script, `skills/money-saver-core` | No (default is workable; Charles should confirm before the first real call) |
+| Q3 | Must Bland calls disclose AI identity? | **Resolved by Charles, 2026-10-22 (D30): disclose up front.** Every call opens by saying the caller is an AI assistant calling on behalf of the user (locked on). If asked, the caller answers truthfully and never claims to be human. This supersedes his earlier choice the same day (no proactive disclosure) | `config/call_scripts/policy.json`, `core/call_policy.py`, `skills/money-saver-core` | No |
 | Q4 | Allow pre-authorized "cancel before trial ends"? | Allowed, with a 2-hour revoke window (FR-1-9) | `execute_not_before` in `core/action_gate.py` | No |
 | Q5 | May the bot actually cancel as negotiation leverage? | Not in the MVP; it may only say the user is considering cancelling | M5 | No |
 | Q6 | Change module order? | Keep the chapter 12 order | `docs/plan.md` | No |
@@ -17,8 +17,9 @@
 | Q11 | Who maintains merchant_registry? Review runtime additions? | Developer Bot maintains the top 150; runtime additions are `unverified` and need an extra warning before execution | `verification` field; every M0 seed entry is `unverified` and has no phone number | No for M0. For M1, verified cancel URLs/playbooks need checking against official pages (see B2) |
 | Q12 | Licensed agent for insurance quotes? | No; only point to official comparison/insurer sites, never fill licensed flows | M5 | No |
 
-**Result:** none of the 12 questions blocks M0 or M1 with the defaults above. Q3 and Q11 matter most for M1 and
-should be confirmed by Charles before any real call or live cancellation.
+**Result:** none of the 12 questions blocks M0 or M1 with the defaults above. Q3 was resolved by Charles on
+2026-10-22 (D30): calls disclose up front that the caller is an AI. Q11 is still open and must be confirmed by
+Charles before any live cancellation.
 
 ## Blockers for M1 acceptance (not in spec 13)
 - **B1 - real labelled samples.** M1 recall/precision (>= 90% / >= 85%) is defined on human-labelled samples. The repo
@@ -67,7 +68,7 @@ should be confirmed by Charles before any real call or live cancellation.
   not scanned, so random hex cannot be mistaken for a card number. Snippets and evidence notes are redacted before
   storage.
 - **D10 Held back from M0:** connector launch config and routine schedules (deploy config), and real executors. These
-  need Charles's approval under `AGENTS.md`.
+  need Charles's approval under `AGENTS.md`. Charles approved the R1, R3, R4, and R10 schedules on 2026-10-22 (D31).
 - **D11 Confirmation trust model.** The MCP server cannot see the chat. It only gets the `user_message` the agent
   passes to `confirm_action_request`, so it cannot prove that a human typed the reply. The gate narrows what an agent
   can claim, and the guarantees and limits are:
@@ -150,3 +151,135 @@ should be confirmed by Charles before any real call or live cancellation.
   Increases are computed when asked for and are not stored. Deduplicating notifications belongs to the routines
   (M1b).
 
+## Engineering decisions (M1b: duplicates, trials, reminders, undo)
+- **D21 Duplicates (FR-1-6).**
+  - Rule (a): the same merchant is active more than once, across accounts, card endings, or channels. On a single
+    account it is flagged `suspected_same_subscription` and both rows are kept (10.1).
+  - Rule (c): a declared household address appears among the recipients of mail in the user's own mailbox. Only
+    that address is stored (`extracted.household_recipient`). Other recipients are dropped, and other mailboxes
+    are never read (PV-7).
+  - Rule (b): category overlap. Thresholds are video >= 3 and cloud storage >= 2 (spec), plus music >= 2 and
+    VPN >= 2.
+  - Group ids are deterministic. Family plan prices are not in the registry, so no saving amount is promised for
+    them.
+- **D22 Trial end inference (FR-1-7).** The basis is, in order: a stated end date, a stated length (start + N
+  days), or else the shortest common length, 7 days. The short default makes reminders early rather than late. A
+  guessed end is capped at confidence 0.45 (needs review), the reminder says it is a guess, and pre-authorization
+  is refused for it.
+- **D23 Reminders (FR-1-8, R3).**
+  - `trial_end` reminders fire at T-2 and T-1, 09:00 in the user's time zone (DST-aware). If both slots have
+    passed, one overdue T-1 reminder is scheduled.
+  - A changed end date dismisses and reschedules. "Keep", or an approved cancellation, stops the reminders.
+  - Quiet hours (default 22:00-08:00) hold delivery. At most one reminder per trial per run.
+  - Remind-later snoozes until the next 09:00, capped at 20:00 on T-1, and is refused after that.
+- **D24 Pre-authorization and undo (FR-1-9, Q4 default).**
+  - The pre-authorization is an ordinary cancel request with `constraints.preauthorized` and `execute_not_before`
+    = T-1 11:00 local. It still needs the user's explicit confirmation.
+  - R4 posts the 2-hour warning at T-1 09:00. A request is `ready_to_execute` only after the warning has been out
+    for 2 hours, so a late warning delays execution.
+  - Undo (`stop_trial_auto_cancel`) accepts any stop or undo wording, because revoking is the safe direction.
+    `取消` alone is ambiguous and does not count.
+  - Pre-authorization is limited to the browser path. Store-billed, phone, and email cancellations are manual
+    steps in M1b. A bot-placed call needs an approved script that passes the Q3 policy (D30). Real calls arrive in M1d.
+    A bot-sent email needs its exact draft approved.
+- **D25 Routines as code.** R1, R3, R4, and R10 are plain functions in `routines/`, also exposed as MCP tools. They
+  return texts for the user's own chat and never send, call, cancel, or start a run. Scheduling them as Grok Bot
+  routines was held for Charles's approval. He approved it on 2026-10-22; see D31.
+- **Q11 (not decided here).** A cancel request for a merchant whose registry entry is not `verified` carries an
+  "unverified" risk note (`modules/trials.py: WARN_UNVERIFIED_MERCHANTS`, TODO(Q11)). Who maintains the registry and
+  how entries become verified is still Charles's decision.
+
+## Decisions by Charles (2026-10-22)
+- **D30 Call honesty (resolves Q3): disclose up front.** Charles revised this decision on 2026-10-22, in his own
+  words: calls MUST proactively disclose up front that the caller is an AI. This supersedes his earlier choice the same
+  day (no proactive disclosure, truthful if asked).
+  - Every call opens with: "Hi, this is an AI assistant calling on behalf of <user> about their account." (Chinese:
+    「您好，我是代表 <user> 致电的 AI 助手，咨询其账户相关事宜。」). The generated rules also tell the caller to say it is an
+    AI assistant in its first sentence on every call.
+  - Truthful if asked still applies: if the other party asks whether they are talking to an AI (or a bot, a robot,
+    a recording), the answer is "Yes, I'm an AI assistant calling on behalf of <user>." The caller never claims to be
+    human and never claims to be the user.
+  - Both settings are locked. `config/call_scripts/policy.json` has `proactive_ai_disclosure: true` and
+    `if_asked_whether_ai: answer_truthfully`. `core/call_policy.py` refuses to load any other value (including
+    `proactive_ai_disclosure: false`), defaults a missing value to true, and rejects unknown keys.
+    `CallPolicy(proactive_ai_disclosure=False)` and `CallPolicy(truthful_if_asked=False)` raise. Locking it on
+    breaks nothing: no code path needed the undisclosed opening. Turning it off again would need a new decision by
+    Charles and a code change, not a config edit.
+  - Call scripts are allowlist-structured. `build_call_script(user_name, task_steps)` writes a generated
+    `[CALL IDENTITY RULES]` block (the disclosing opening line, the truthful answer, never claim to be human or the
+    user, rules override task steps), then `[TASK]` with numbered steps. Task steps may not discuss the caller's
+    identity: no AI, bot, human, person, pretending, or evasion wording, and no self-claim to be the user, the
+    account holder, or an agent or representative.
+    `validate_script` is a normalized deny-list backstop. It applies NFKC, straight quotes, A.I. -> ai, removes
+    invisible characters, collapses whitespace, lowercases, and has English and Chinese patterns.
+  - The action gate enforces this for every `bland_call` request (`place_call`, `negotiate_bill`, phone cancels and
+    claims). It runs on create and amend, and again in `begin_execution`. `constraints.call_user_name` (plus
+    `constraints.account_holder_name` when different) must be set. The identity block must match exactly for that
+    name. The validator also checks, separately, that the opening line carries the AI disclosure, so a script
+    without it is rejected. Every task step must pass. Any error, including a policy file that does not load or
+    tries to turn disclosure off, rejects the request (fail closed). The bot gets a valid script from the
+    `build_call_script` tool. The confirmation card shows "Calling on behalf of: <name>. The caller says up front
+    that it is an AI assistant." as its first line.
+  - Names are bound to the user's settings. The user's name, plus any other account-holder names the user lists,
+    is saved with `set_call_identity` in `notification_prefs.call_identity` (existing JSON column, no schema
+    change). The gate requires a saved identity and re-validates it on every check. It rejects a request whose
+    `call_user_name` differs from the saved name, or whose `account_holder_name` is not a saved name.
+    `build_call_script` (tool) takes the name from settings, not from the agent.
+  - Names are allowlisted (`check_name`):
+    - Unicode letters in one script (CJK may mix Han and kana), with single spaces, hyphens, and apostrophes only
+      between letters. At most 40 characters and 4 words.
+    - No digits, punctuation, full-width or compatibility forms, invisible characters, or mixed scripts.
+    - A short list of words that are never part of a name: instruction words ("ignore", "say", "if", "you", ...),
+      identity words (human, robot, bot, AI, assistant, machine, ...), and role words (husband, wife, mom, holder,
+      customer, authorized, ...). Real names such as "Nguyễn Văn An", "Grace Son", "Ray Parent", "Sam Person",
+      "Destiny Real", "Rob Agent" and "Ai Weiwei" pass. The task-step filters are not applied to names any more:
+      names are already bound to the saved identity and strictly charset-checked, which leaves little room for
+      injection.
+  - Task-step checks:
+    - Steps use Latin or Chinese/Japanese letters only (plus digits, punctuation and symbols). Other scripts,
+      including Cyrillic, Greek, Armenian and Cherokee look-alikes, are rejected.
+    - Checks run on several forms of the text: plain, spaced letters joined ("h u m a n"), split words joined
+      ("hu man"), confusables folded (Cyrillic, Greek, Armenian, Cherokee, Latin small capitals and other letter
+      variants), and digit swaps undone ("hum4n"). They also run on all steps joined together, so a claim cannot be
+      split across steps. Long encoded strings (base64 and similar) are rejected.
+    - Identity terms include software, program (not "loyalty program" and similar), machine, and family words
+      (spouse, husband, wife, relative, ...), plus authorized / power of attorney. "Agent", "representative",
+      "operator" and "caller" are rejected only in a claim about the caller ("you are a live agent"); asking for one
+      ("Ask if the agent can waive the fee") is fine. The same goes for names: "your name is" is rejected, "ask the
+      representative for their name" is fine.
+    - First person may refer only to the AI assistant, never to the account: "my account", "I have been a customer
+      since 2019", "the account is yours", "speak as if" are rejected.
+    - Steps must be stated in full: "follow the instructions in the notes field" and similar are rejected.
+    - A yes/no answer must name the question it answers, and the question may not be about the caller. "If they ask
+      whether you want to keep the service, say no" is fine; "If they ask, answer no" and "If they ask whether this
+      is a robocall, say no" are rejected.
+    - A small set of other-language identity words is covered (humain, Mensch, humano, zhenren, ...).
+  - A deny-list cannot be complete. The generated rules say they override every task step, and post-call
+    transcript audits (did the caller disclose up front, did it ever claim to be human or the user) are planned for
+    M1d, when Bland calls are wired up.
+  - No real calls are placed. Bland calls are still M1d work and still go through the confirmation gate.
+- **D31 Routines on by default.** R1 (daily scan, 05:30), R3 (reminder dispatch, hourly), R4 (trial guard, hourly),
+  and R10 (request expiry, hourly) are enabled by default. Each time is in the user's time zone.
+  - R4 runs hourly instead of only at 09:00 (spec 7.3 lists it daily). A pre-authorized cancel becomes ready at T-1
+    11:00, two hours after the 09:00 warning. A daily-only run would first see it at T 09:00, which may be after the
+    charge. The user-facing timing is unchanged: the T-2/T-1 reminders and the warning are still keyed to 09:00
+    local, and the other hourly runs post nothing new.
+  - The registry is `routines/schedule.py`. The `list_routines` tool returns what the bot registers as Grok Bot
+    scheduled tasks.
+  - A user can turn a routine off with `set_routine_enabled`. The setting is stored in
+    `notification_prefs.routines`, so the schema does not change. A missing setting means on. Values must be real
+    booleans: `update_settings` and `set_routine_enabled` reject `"false"`, `0`, and similar. On read, only `true`
+    or a missing value counts as on; any other stored value counts as off.
+  - If a disabled routine still fires, every tool it calls with `scheduled=true` returns `skipped`. For R1 this is
+    the whole scan: `scan_plan` returns `skipped` with "do not read Gmail", and `ingest_messages`, `complete_scan`,
+    and `refresh_after_scan` also skip. A scan the user asks for by hand still runs.
+  - Routines only read and post texts to the user's own chat. They never send to third parties, call, cancel, or
+    start an action run. Any cancellation still needs the user's explicit confirmation through the action gate.
+    Tests check this.
+- **Open decision for Charles: calling as family or an "authorized" person.** Whether a call may say it is
+  the user's spouse or relative, or that it is authorized to act on the account (power of attorney, authorized
+  user), is a business and legal question for M1d. Until Charles decides, it fails closed: task steps with those
+  terms are rejected (`IDENTITY_TOPIC`, D30), and the identity block only ever says "calling on behalf of
+  <user>".
+- **Still open or deferred.** Q11 (who maintains the merchant registry) is still open. The accuracy test with real
+  labeled emails (B1) is deferred.
