@@ -353,3 +353,28 @@ def test_expired_trial_request_gets_one_last_reminder(store, gate, clock, resolv
                                           ("go ahead", False), ("", False), (None, False)])
 def test_is_stop_reply(msg, expected):
     assert is_stop_reply(msg) is expected
+
+
+def test_hourly_r4_sees_preauth_ready_at_t1_1100(store, gate, clock, resolver):
+    """Review of PR #4: R4 runs hourly, so the pre-authorized cancel is ready at T-1 11:00 local, the same day as
+    the 09:00 warning. A daily-only 09:00 run would first list it at T 09:00."""
+    from datetime import timedelta
+    from routines import r4_trial_guard
+    from routines.schedule import BY_ID
+    assert BY_ID["R4"]["cron"] == "0 * * * *"
+    sub, t, req = _preauth_approved(store, gate, clock, resolver)
+    clock.now = Z("2026-10-24T07:00:00Z")            # T-2 00:00 local
+    first_warning = first_ready = None
+    warnings = 0
+    while clock.now < Z("2026-10-27T07:00:00Z"):
+        out = r4_trial_guard.run(store, gate)
+        if out["warnings"]:
+            warnings += len(out["warnings"])
+            first_warning = first_warning or clock.now
+        if out["ready_to_execute"] and first_ready is None:
+            first_ready = clock.now
+        clock.advance(hours=1)
+    assert first_warning == Z("2026-10-25T16:00:00Z")   # T-1 09:00 local (user-facing time unchanged)
+    assert first_ready == Z("2026-10-25T18:00:00Z")     # T-1 11:00 local
+    assert warnings == 1                                # hourly runs do not repeat the warning
+    assert store.count("action_runs") == 0              # listed only, never executed

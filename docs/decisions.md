@@ -207,13 +207,21 @@
     name, and every task step must pass. Any error, including a policy file that does not load, rejects the request
     (fail closed). The bot gets a valid script from the `build_call_script` tool.
   - No real calls are placed. Bland calls are still M1d work and still go through the confirmation gate.
-- **D31 Routines on by default.** R1 (daily scan, 05:30), R3 (reminder dispatch, hourly), R4 (trial guard, 09:00),
+- **D31 Routines on by default.** R1 (daily scan, 05:30), R3 (reminder dispatch, hourly), R4 (trial guard, hourly),
   and R10 (request expiry, hourly) are enabled by default. Each time is in the user's time zone.
+  - R4 runs hourly instead of only at 09:00 (spec 7.3 lists it daily). A pre-authorized cancel becomes ready at T-1
+    11:00, two hours after the 09:00 warning. A daily-only run would first see it at T 09:00, which may be after the
+    charge. The user-facing timing is unchanged: the T-2/T-1 reminders and the warning are still keyed to 09:00
+    local, and the other hourly runs post nothing new.
   - The registry is `routines/schedule.py`. The `list_routines` tool returns what the bot registers as Grok Bot
     scheduled tasks.
   - A user can turn a routine off with `set_routine_enabled`. The setting is stored in
-    `notification_prefs.routines`, so the schema does not change. A missing setting means on. A disabled routine's
-    tool returns `skipped` if it still fires.
+    `notification_prefs.routines`, so the schema does not change. A missing setting means on. Values must be real
+    booleans: `update_settings` and `set_routine_enabled` reject `"false"`, `0`, and similar. On read, only `true`
+    or a missing value counts as on; any other stored value counts as off.
+  - If a disabled routine still fires, every tool it calls with `scheduled=true` returns `skipped`. For R1 this is
+    the whole scan: `scan_plan` returns `skipped` with "do not read Gmail", and `ingest_messages`, `complete_scan`,
+    and `refresh_after_scan` also skip. A scan the user asks for by hand still runs.
   - Routines only read and post texts to the user's own chat. They never send to third parties, call, cancel, or
     start an action run. Any cancellation still needs the user's explicit confirmation through the action gate.
     Tests check this.

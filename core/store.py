@@ -376,6 +376,13 @@ class Store:
                 last4 = str(card.get("last4", ""))
                 if last4 and (len(last4) != 4 or not last4.isdigit()):
                     raise ValueError("cards_held stores only the last 4 digits")
+        if "notification_prefs" in changes:
+            prefs = changes["notification_prefs"]
+            if not isinstance(prefs, dict):
+                raise ValueError("notification_prefs must be an object")
+            if "routines" in prefs:
+                from routines.schedule import validate_routine_prefs  # local import: routines depends on core
+                validate_routine_prefs(prefs["routines"])
         if "thresholds" in changes:
             changes = {**changes, "thresholds": {**(user.get("thresholds") or {}),
                                                  **validate_thresholds(changes["thresholds"])}}

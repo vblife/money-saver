@@ -7,8 +7,9 @@ These routines only read (Gmail via the bot's own connector, the local DB) and r
 None of them sends anything to a third party, places a call, cancels a service, or starts an action run. A
 cancellation always needs the user's explicit confirmation through the action gate.
 
-A user can turn R1, R3 or R4 off (``notification_prefs.routines``; a missing value means on). R10 only expires stale
-requests, which is the safe direction, so it cannot be turned off.
+A user can turn R1, R3 or R4 off (``notification_prefs.routines``; a missing value means on, values must be real
+booleans). R10 only expires stale requests, which is the safe direction, so it cannot be turned off. R4 runs hourly
+so a pre-authorized cancel is seen as ready at T-1 11:00; its user-facing texts are still keyed to 09:00 local.
 """
 from __future__ import annotations
 
@@ -19,16 +20,20 @@ from core.store import Store
 ROUTINES: tuple[dict[str, Any], ...] = (
     {"id": "R1", "name": "daily_email_scan", "schedule": {"kind": "daily", "at": "05:30"}, "cron": "30 5 * * *",
      "tools": ["scan_plan", "ingest_messages", "complete_scan", "refresh_after_scan"],
-     "prompt": ("money-saver R1: for each connected Gmail account, call scan_plan, run each query with the Gmail "
-                "connector (read only), pass the messages to ingest_messages, then complete_scan, then "
-                "refresh_after_scan with scheduled=true. Post nothing unless the result has a text for the user."),
+     "prompt": ("money-saver R1: for each connected Gmail account, call scan_plan with scheduled=true. If it returns "
+                "skipped, stop and do not read Gmail. Otherwise run each query with the Gmail connector (read only), "
+                "pass the messages to ingest_messages, then complete_scan, then refresh_after_scan, each with "
+                "scheduled=true. Post nothing unless the result has a text for the user."),
      "enabled_by_default": True, "user_can_disable": True},
     {"id": "R3", "name": "reminder_dispatch", "schedule": {"kind": "hourly", "at": ":00"}, "cron": "0 * * * *",
      "tools": ["dispatch_reminders"],
      "prompt": ("money-saver R3: call dispatch_reminders with scheduled=true and post each returned text to the user "
                 "in this chat, unchanged."),
      "enabled_by_default": True, "user_can_disable": True},
-    {"id": "R4", "name": "trial_guard", "schedule": {"kind": "daily", "at": "09:00"}, "cron": "0 9 * * *",
+    # Hourly (review of PR #4): a pre-authorized cancel becomes ready at T-1 11:00, two hours after the 09:00
+    # warning; a daily-only run would not see it until T 09:00, possibly after the charge. User-facing times are
+    # unchanged: reminders and the warning are still keyed to 09:00 local, so the other hourly runs post nothing.
+    {"id": "R4", "name": "trial_guard", "schedule": {"kind": "hourly", "at": ":00"}, "cron": "0 * * * *",
      "tools": ["run_trial_guard"],
      "prompt": ("money-saver R4: call run_trial_guard with scheduled=true and post each returned text to the user in "
                 "this chat, unchanged. Never start an action run from this routine."),
@@ -40,21 +45,44 @@ ROUTINES: tuple[dict[str, Any], ...] = (
      "enabled_by_default": True, "user_can_disable": False},
 )
 BY_ID = {r["id"]: r for r in ROUTINES}
-# Tool name -> routine id, for the tools a scheduled run calls last (the one that may be skipped when disabled).
-TOOL_TO_ROUTINE = {"refresh_after_scan": "R1", "dispatch_reminders": "R3", "run_trial_guard": "R4",
-                   "expire_action_requests": "R10"}
+# Tool name -> routine id. With scheduled=true, every tool of a disabled routine is skipped (R1: the whole scan,
+# including scan_plan, so the bot reads no Gmail).
+TOOL_TO_ROUTINE = {"scan_plan": "R1", "ingest_messages": "R1", "complete_scan": "R1", "refresh_after_scan": "R1",
+                   "dispatch_reminders": "R3", "run_trial_guard": "R4", "expire_action_requests": "R10"}
 
 
 def _prefs(store: Store) -> dict[str, Any]:
     return dict(store.get_user().get("notification_prefs") or {})
 
 
+def validate_routine_prefs(value: Any) -> dict[str, bool]:
+    """``notification_prefs.routines`` must map known routine ids to real booleans (not "false", 0, or None)."""
+    if not isinstance(value, dict):
+        raise ValueError("notification_prefs.routines must be an object of routine id -> true/false")
+    for rid, v in value.items():
+        if rid not in BY_ID:
+            raise ValueError(f"unknown routine: {rid}")
+        if not isinstance(v, bool):
+            raise ValueError(f"notification_prefs.routines.{rid} must be true or false, not {v!r}")
+        if v is False and not BY_ID[rid]["user_can_disable"]:
+            raise ValueError(f"{rid} only expires stale requests and cannot be turned off")
+    return dict(value)
+
+
 def is_enabled(store: Store, routine_id: str) -> bool:
+    """Strict: only a stored ``True`` or a missing value (the default, on) counts as enabled. ``False`` or any
+    non-boolean value (for example the string "false", from data written before validation) counts as off."""
     r = BY_ID[routine_id]
     if not r["user_can_disable"]:
         return True
-    value = (_prefs(store).get("routines") or {}).get(routine_id)
-    return r["enabled_by_default"] if value is None else bool(value)
+    routines = _prefs(store).get("routines")
+    if routines is None:
+        return r["enabled_by_default"]
+    if not isinstance(routines, dict):
+        return False
+    if routine_id not in routines:
+        return r["enabled_by_default"]
+    return routines[routine_id] is True
 
 
 def list_routines(store: Store) -> dict[str, Any]:
@@ -81,4 +109,7 @@ def set_enabled(store: Store, routine_id: str, enabled: bool) -> dict[str, Any]:
 
 
 def skipped(routine_id: str) -> dict[str, Any]:
-    return {"skipped": True, "routine": routine_id, "reason": "turned off by the user", "texts": []}
+    out = {"skipped": True, "routine": routine_id, "reason": "turned off by the user", "texts": []}
+    if routine_id == "R1":
+        out["instruction"] = "R1 is off: stop here and do not read Gmail."
+    return out

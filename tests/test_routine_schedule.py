@@ -27,7 +27,7 @@ def test_registry_has_the_four_routines_with_spec_times():
     assert got == {
         "R1": ("daily_email_scan", {"kind": "daily", "at": "05:30"}, "30 5 * * *"),
         "R3": ("reminder_dispatch", {"kind": "hourly", "at": ":00"}, "0 * * * *"),
-        "R4": ("trial_guard", {"kind": "daily", "at": "09:00"}, "0 9 * * *"),
+        "R4": ("trial_guard", {"kind": "hourly", "at": ":00"}, "0 * * * *"),   # hourly since the PR #4 review
         "R10": ("action_request_expiry", {"kind": "hourly", "at": ":15"}, "15 * * * *"),
     }
     assert all(r["enabled_by_default"] is True for r in schedule.ROUTINES)
@@ -137,3 +137,69 @@ def test_schemas_declare_scheduled_flag():
     for tool in schedule.TOOL_TO_ROUTINE:
         assert by[tool]["inputSchema"]["properties"]["scheduled"]["type"] == "boolean"
     assert by["list_routines"]["annotations"]["readOnlyHint"] is True
+
+
+# --- review follow-ups: strict booleans, whole-scan skip ----------------------------------------
+@pytest.mark.parametrize("value", ["false", "False", "0", 0, 1, "true", None, [], {}])
+def test_non_bool_routine_values_rejected_on_save(store, value):
+    prefs = dict(store.get_user()["notification_prefs"])
+    with pytest.raises(ValueError):
+        store.update_user({"notification_prefs": {**prefs, "routines": {"R1": value}}})
+    with pytest.raises(ValueError):
+        schedule.set_enabled(store, "R1", value)
+    assert schedule.is_enabled(store, "R1") is True   # nothing was saved
+
+
+@pytest.mark.parametrize("routines", [{"R99": True}, {"R10": False}, "R1=false", ["R1"]])
+def test_bad_routine_prefs_rejected_on_save(store, routines):
+    prefs = dict(store.get_user()["notification_prefs"])
+    with pytest.raises(ValueError):
+        store.update_user({"notification_prefs": {**prefs, "routines": routines}})
+
+
+def test_update_settings_accepts_real_booleans(app):
+    prefs = dict(app.store.get_user()["notification_prefs"])
+    app.call("update_settings", {"settings": {"notification_prefs": {**prefs, "routines": {"R3": False}}}})
+    assert schedule.is_enabled(app.store, "R3") is False
+    with pytest.raises(ValueError):
+        app.call("update_settings", {"settings": {"notification_prefs": {**prefs, "routines": {"R3": "false"}}}})
+
+
+@pytest.mark.parametrize("legacy", ["false", "no", 0, None, "true", 1])
+def test_legacy_non_bool_values_read_strictly_as_off(store, legacy):
+    # Rows written before validation existed: only a real True (or a missing value) is on.
+    user = store.get_user()
+    prefs = {**user["notification_prefs"], "routines": {"R4": legacy}}
+    store.update("users", user["id"], {"notification_prefs": prefs})
+    assert schedule.is_enabled(store, "R4") is False
+    assert schedule.is_enabled(store, "R3") is True
+    store.update("users", user["id"], {"notification_prefs": {**prefs, "routines": "garbage"}})
+    assert schedule.is_enabled(store, "R1") is False and schedule.is_enabled(store, "R10") is True
+
+
+def test_disabled_r1_skips_the_whole_scheduled_scan(app):
+    app.call("set_routine_enabled", {"routine_id": "R1", "enabled": False})
+    plan = app.call("scan_plan", {"account": "alex@example.com", "scheduled": True})
+    assert plan["skipped"] is True and "do not read Gmail" in plan["instruction"]
+    assert "queries" not in plan
+    msg = {"id": "m1", "from": "Netflix <billing@netflix.com>", "subject": "Your receipt",
+           "date": "2026-10-03T16:00:00Z", "body": "You were charged $15.49 for your monthly plan."}
+    assert app.call("ingest_messages", {"account": "alex@example.com", "messages": [msg], "scheduled": True})["skipped"]
+    assert app.call("complete_scan", {"account": "alex@example.com", "scan_started_at": "2026-10-22T12:30:00Z",
+                                      "scheduled": True})["skipped"]
+    assert app.store.count("source_messages") == 0
+    assert app.store.get_user()["scan_cursor"] in ({}, None)
+    # The user can still ask for a scan by hand.
+    assert "skipped" not in app.call("scan_plan", {"account": "alex@example.com"})
+    assert app.call("ingest_messages", {"account": "alex@example.com", "messages": [msg]}).get("skipped") is None
+    assert app.store.count("source_messages") == 1
+
+
+def test_enabled_r1_scheduled_scan_runs(app):
+    plan = app.call("scan_plan", {"account": "alex@example.com", "scheduled": True})
+    assert "skipped" not in plan
+
+
+def test_r1_prompt_tells_the_bot_to_stop_before_reading_gmail():
+    p = schedule.BY_ID["R1"]["prompt"]
+    assert "scan_plan with scheduled=true" in p and "do not read Gmail" in p

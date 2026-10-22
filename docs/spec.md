@@ -486,7 +486,7 @@ SourceMessage（Gmail 邮件索引）被所有实体以 source_message_ids 引�
 | R9 `annual_reviews` | 每日检查 | 05:45 | 保险续保前 45 天、促销到期前 30 天触发谈判/比价 ActionRequest |
 | R10 `action_request_expiry` | 每小时 | – | 过期未确认请求置为 `expired`，必要时（如试用）发最后提醒 |
 
-**默认启用（Charles，2026-10-22，docs/decisions.md D31）：** R1、R3、R4、R10 默认开启（注册表见 `routines/schedule.py`，Bot 通过 `list_routines` 注册为定时任务）。这些 Routine 只读取数据并向用户本人发送提醒，不向第三方发送任何内容；任何取消仍须经确认闸门由用户明确确认（当前 R4 不执行取消，执行在 M1d 经闸门实现）。用户可关闭 R1/R3/R4，R10 不可关闭。
+**默认启用（Charles，2026-10-22，docs/decisions.md D31）：** R1、R3、R4、R10 默认开启（注册表见 `routines/schedule.py`，Bot 通过 `list_routines` 注册为定时任务）。这些 Routine 只读取数据并向用户本人发送提醒，不向第三方发送任何内容；任何取消仍须经确认闸门由用户明确确认（当前 R4 不执行取消，执行在 M1d 经闸门实现）。用户可关闭 R1/R3/R4，R10 不可关闭。R4 改为每小时运行（预授权取消在 T-1 11:00 即可就绪，避免错过扣费时间），面向用户的提醒与警告仍按当地 09:00 发出。
 
 **并发与限流**：浏览器任务串行队列（单浏览器实例）；同一零售商抓取间隔 ≥ 10 秒；每日价格检查总量上限 200 个 URL/用户；Bland 通话同一时间最多 1 通，单日最多 5 通（可配置）；营业时间外不拨打（按商家时区 9:00–17:00 或 registry 中的客服时间）。
 
