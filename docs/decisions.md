@@ -113,7 +113,7 @@ should be confirmed by Charles before any real call or live cancellation.
   inside the inbox. The copy is read from that descriptor (never by path again) into a new `0600` file, and is
   hashed while copying.
 - **D15 Schema versions and migrations.** `PRAGMA user_version` holds the schema version (now 2). v1 is the schema at
-  87b31c9 and is frozen in `tests/fixtures/schema_v1.sql`. The v1 → v2 migration rebuilds `action_requests` (adding
+  87b31c9 and is frozen in `core/schemas/v1.sql`. The v1 → v2 migration rebuilds `action_requests` (adding
   `executor`, the confirmation code/text/digest, `approval_source` and `execute_by`) in one transaction with
   foreign keys checked afterwards. It rolls back completely on any error. It fails closed: v1 requests that were
   still `pending_user` or `approved` were never bound to a confirmation text, so they become `expired` with a history
