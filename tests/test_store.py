@@ -3,20 +3,24 @@ import sqlite3
 import pytest
 
 from core.privacy import ForbiddenDataError
-from core.store import SCHEMA_VERSION, TABLES, Store
+from core.store import TABLES, Store
 
 
 def test_schema_creates_all_section6_tables(store):
-    assert store.schema_version() == SCHEMA_VERSION
     names = {r[0] for r in store.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert set(TABLES) <= names
 
 
-def test_migrate_is_idempotent(tmp_path):
+def test_reopen_keeps_data_and_has_no_version_stamp(tmp_path):
+    """D15: the schema is defined directly (CREATE TABLE IF NOT EXISTS); no user_version, no migrations."""
     p = str(tmp_path / "x.db")
-    Store(p).close()
     s = Store(p)
-    assert s.schema_version() == SCHEMA_VERSION
+    s.get_user()
+    s.close()
+    s = Store(p)
+    assert s.count("users") == 1
+    assert s.conn.execute("PRAGMA user_version").fetchone()[0] == 0
+    assert not hasattr(s, "migrate") and not hasattr(s, "schema_version")
     s.close()
 
 

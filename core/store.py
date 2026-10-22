@@ -15,9 +15,6 @@ from typing import Any, Iterable
 from . import privacy
 from .util import default_db_path, new_id, to_iso, utcnow
 
-SCHEMA_VERSION = 2
-# v1 (PR #1 head 87b31c9): original chapter 6 schema.
-# v2: action_requests gains executor (NOT NULL), confirmation_code/_text/_sha256, approval_source, execute_by.
 # Values we generate ourselves skip the forbidden-data scan, but only when they match our exact formats
 # (random hex digests can contain a Luhn-valid digit run). Everything else, including any agent- or
 # email-supplied "*_id" value such as merchant_id or message_id, is scanned.
@@ -214,60 +211,14 @@ class Store:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
-        self.migrate()
+        self._create_schema()
 
     # -- schema -----------------------------------------------------------------------
-    def migrate(self) -> None:
-        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > SCHEMA_VERSION:
-            raise RuntimeError(f"database schema v{version} is newer than this code (v{SCHEMA_VERSION}); refusing to open")
-        if version == 0:
-            self.conn.executescript(DDL)
-            self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            self.conn.commit()
-            return
-        if version == 1:
-            self._migrate_v1_to_v2()
-
-    def _migrate_v1_to_v2(self) -> None:
-        """Rebuild action_requests with the v2 columns (SQLite cannot add a NOT NULL column without a default).
-
-        Fail closed: v1 requests were never bound to a confirmation text or channel, so any that are still
-        pending or approved become ``expired`` and must be asked again. Terminal rows are kept as they are."""
-        conn = self.conn
-        create = re.search(r"CREATE TABLE IF NOT EXISTS action_requests \((.*?)\);", DDL, re.S).group(1)
-        now = to_iso(utcnow())
-        conn.execute("PRAGMA foreign_keys = OFF")
-        try:
-            conn.execute("BEGIN")
-            conn.execute(f"CREATE TABLE action_requests_v2 ({create})")
-            for row in conn.execute("SELECT * FROM action_requests").fetchall():
-                r = dict(row)
-                r["executor"] = V1_DEFAULT_EXECUTOR.get(r["action_type"], "manual")
-                if r["status"] in ("pending_user", "approved"):
-                    history = json.loads(r["history"] or "[]")
-                    history.append({"ts": now, "from": r["status"], "to": "expired",
-                                    "note": "schema v1 -> v2 migration: request was not bound to a confirmation text; ask again"})
-                    r.update(status="expired", history=json.dumps(history, ensure_ascii=False, sort_keys=True),
-                             updated_at=now)
-                cols = ", ".join(r)
-                conn.execute(f"INSERT INTO action_requests_v2 ({cols}) VALUES ({', '.join('?' for _ in r)})", list(r.values()))
-            conn.execute("DROP TABLE action_requests")
-            conn.execute("ALTER TABLE action_requests_v2 RENAME TO action_requests")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_status ON action_requests(status)")
-            problems = conn.execute("PRAGMA foreign_key_check").fetchall()
-            if problems:
-                raise RuntimeError(f"foreign key check failed after migration: {problems[:3]}")
-            conn.execute("PRAGMA user_version = 2")
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        finally:
-            conn.execute("PRAGMA foreign_keys = ON")
-
-    def schema_version(self) -> int:
-        return self.conn.execute("PRAGMA user_version").fetchone()[0]
+    def _create_schema(self) -> None:
+        """Create the current schema (D15). There are no schema versions and no migrations while money-saver is
+        in development: a schema change edits ``DDL`` directly, and an old dev database is deleted and rebuilt."""
+        self.conn.executescript(DDL)
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -420,12 +371,6 @@ def _scan_json(value: Any, field: str) -> None:
         privacy.assert_no_forbidden_secrets(str(value), field=field)
     else:
         raise TypeError(f"{field}: unsupported JSON value {type(value).__name__}")
-
-
-# Default channel per action type for rows migrated from v1 (mirrors core.action_gate.ALLOWED_EXECUTORS[...][0]).
-V1_DEFAULT_EXECUTOR = {"cancel_subscription": "browser", "negotiate_bill": "bland_call", "place_call": "bland_call",
-                       "submit_claim": "browser", "send_email": "email", "rebook_travel": "browser",
-                       "submit_form_with_pii": "browser"}
 
 
 USER_FIELDS = ("timezone", "gmail_accounts", "household_emails", "home_zip", "states_lived", "cards_held",
