@@ -40,7 +40,7 @@ Source: `docs/spec.md` chapter 12 (milestones), with the defaults in `docs/decis
 1. **M1a Subscription inventory** (done in `modules/subscriptions.py`; see D16-D20): build `Subscription` + `Charge` from indexed messages; aggregator split; period
    inference (FR-1-3); `next_charge_date` (FR-1-4); last-used signal labelled "inferred" (FR-1-5); price-increase
    detection (FR-1-16); conversational list ("what subscriptions do I have?").
-2. **M1b Duplicates and trials:** duplicate rules a/b/c (FR-1-6); trial tracking with inferred lengths flagged low
+2. **M1b Duplicates and trials** (done in `modules/duplicates.py`, `modules/trials.py`, and `routines/`; see D21-D25): duplicate rules a/b/c (FR-1-6); trial tracking with inferred lengths flagged low
    confidence (FR-1-7); `Reminder` rows at T-2 and T-1 at 09:00 local (FR-1-8); pre-authorized auto-cancel with the
    2-hour revoke window (FR-1-9, already supported by the gate); routines R1, R3, R4, R10 as code (scheduling config
    held for approval).

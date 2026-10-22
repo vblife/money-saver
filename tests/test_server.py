@@ -159,3 +159,39 @@ def test_stdio_subscription_inventory(tmp_path):
         assert ctx["counts"]["subscriptions"] == 2 and ctx["counts"]["action_requests"] == 0
     finally:
         c.close()
+
+
+def test_stdio_trial_flow_needs_confirmation(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    end = (datetime.now(timezone.utc) + timedelta(days=10)).date()
+    c = Client(tmp_path)
+    try:
+        c.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        names = {t["name"] for t in c.rpc("tools/list")["result"]["tools"]}
+        assert {"refresh_after_scan", "detect_duplicates", "dispatch_reminders", "run_trial_guard",
+                "respond_to_trial_reminder", "preauthorize_trial_cancel", "stop_trial_auto_cancel"} <= names
+        c.tool("ingest_messages", account="alex@example.com", messages=[{
+            "id": "t1", "from": "Peacock <hello@peacocktv.com>", "subject": "Welcome to your Peacock free trial",
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "body": f"Your free trial has started. Your trial ends on {end.strftime('%b %d, %Y')}. Then $7.99/month."}])
+        out = c.tool("refresh_after_scan")["structuredContent"]
+        assert len(out["inventory"]["created"]) == 1 and len(out["reminders"]["scheduled"]) == 2
+        sub_id = out["inventory"]["created"][0]
+        pre = c.tool("preauthorize_trial_cancel", subscription_id=sub_id)["structuredContent"]
+        assert pre["request"]["status"] == "pending_user" and "confirm " in pre["confirmation_text"]
+        guard = c.tool("run_trial_guard")["structuredContent"]
+        assert guard["ready_to_execute"] == [] and guard["warnings"] == []
+        bad = c.tool("stop_trial_auto_cancel", subscription_id=sub_id, user_message="sounds good")
+        assert bad["isError"]
+        stop = c.tool("stop_trial_auto_cancel", subscription_id=sub_id, user_message="stop")["structuredContent"]
+        assert stop["revoked_request_ids"] == [pre["request"]["id"]]
+        cancel = c.tool("respond_to_trial_reminder", subscription_id=sub_id, choice="cancel")["structuredContent"]
+        assert cancel["request"]["status"] == "pending_user"
+        started = c.tool("start_action_run", request_id=cancel["request"]["id"], executor="browser")
+        assert started["isError"]
+        dup = c.tool("detect_duplicates")["structuredContent"]
+        assert dup["text"] == "No duplicate subscriptions found."
+        exp = c.tool("expire_action_requests")["structuredContent"]
+        assert exp == {"expired": [], "messages": []}
+    finally:
+        c.close()

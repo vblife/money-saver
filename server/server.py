@@ -26,7 +26,9 @@ from core.ledger import MODULES, Ledger, LedgerError  # noqa: E402
 from core.merchant_resolver import MerchantResolver  # noqa: E402
 from core.privacy import ForbiddenDataError  # noqa: E402
 from core.store import USER_FIELDS, Store  # noqa: E402
-from modules import subscriptions as subs_mod  # noqa: E402
+from modules import duplicates as dup_mod, subscriptions as subs_mod  # noqa: E402
+from modules.trials import CHOICES as TRIAL_CHOICES, Trials  # noqa: E402
+from routines import r1_daily_scan, r3_reminder_dispatch, r4_trial_guard, r10_expiry  # noqa: E402
 
 NAME, VERSION = "money-saver", "0.1.0"
 DELETE_PHRASE = "DELETE ALL MY DATA"
@@ -39,7 +41,7 @@ def O(props, req=()):
 S, I, B = {"type": "string"}, {"type": "integer"}, {"type": "boolean"}
 ARR_S = {"type": "array", "items": S}
 RO = {"readOnlyHint": True}
-MSG = O({"id": S, "thread_id": S, "from": S, "subject": S, "date": {"type": "string", "description": "ISO 8601"},
+MSG = O({"id": S, "thread_id": S, "from": S, "to": {"type": "string", "description": "Recipients header. Only a declared household address is kept (FR-1-6c); nothing else is stored."}, "subject": S, "date": {"type": "string", "description": "ISO 8601"},
          "body": {"type": "string", "description": "Plain-text body. Used for classification only; never stored in full."},
          "llm_extraction": {"type": "object", "description": "Optional LLM fields: {field: {value, evidence_span}}"}}, ["id"])
 DISCLOSED = O({"field": S, "value_masked": S}, ["field", "value_masked"])
@@ -85,6 +87,28 @@ TOOLS = [
      "inputSchema": O({"display_name": S, "amount_cents": I, "period": {"type": "string", "enum": list(subs_mod.PERIODS)},
                        "next_charge_date": S, "merchant_id": S, "account_email": S},
                       ["display_name", "amount_cents", "period"])},
+    {"name": "refresh_after_scan", "title": "Refresh after a Gmail scan (R1)",
+     "description": "Routine R1 after ingest_messages/complete_scan: rebuild the subscription inventory, detect duplicates, and schedule trial reminders. Idempotent.",
+     "inputSchema": O({})},
+    {"name": "detect_duplicates", "title": "Duplicate subscriptions",
+     "description": "FR-1-6: the same merchant billed more than once (a), overlapping services in one category (b), and the same merchant for household members (c). Family plan prices are not checked.",
+     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
+    {"name": "dispatch_reminders", "title": "Send due reminders (R3)",
+     "description": "Routine R3 (hourly): due trial reminders as texts to post in the user's own chat, with options cancel/keep/remind_later. Held during quiet hours.",
+     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
+    {"name": "run_trial_guard", "title": "Trial guard (R4)",
+     "description": "Routine R4 (daily 09:00): schedule T-2/T-1 reminders, post the 2-hour warning before a pre-authorized cancellation, and list approved cancellations whose undo window has passed. Never executes anything.",
+     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
+    {"name": "respond_to_trial_reminder", "title": "User's answer to a trial reminder",
+     "description": "keep stops the reminders; remind_later snoozes (never past 20:00 the day before the trial ends); cancel creates a cancel request that still needs explicit confirmation (show its confirmation_text).",
+     "inputSchema": O({"subscription_id": S, "choice": {"type": "string", "enum": list(TRIAL_CHOICES)}, "lang": {"type": "string", "enum": ["en", "zh"]}},
+                      ["subscription_id", "choice"])},
+    {"name": "preauthorize_trial_cancel", "title": "Pre-authorize cancelling a trial",
+     "description": "FR-1-9: create a cancel request that runs the day before the trial ends, after a 2-hour warning. Browser path only, and only with a stated trial end date or length. It must still be confirmed explicitly like any request.",
+     "inputSchema": O({"subscription_id": S, "lang": {"type": "string", "enum": ["en", "zh"]}}, ["subscription_id"])},
+    {"name": "stop_trial_auto_cancel", "title": "Undo a trial cancellation",
+     "description": "The undo ('reply stop'): revoke open cancel requests for this subscription that have not started. Pass the user's reply verbatim.",
+     "inputSchema": O({"subscription_id": S, "user_message": S}, ["subscription_id", "user_message"])},
     {"name": "create_action_request", "title": "Create action request",
      "description": "REQUIRED before any consequential action (cancel, call, claim, email, rebook, form with personal data, accepting terms). Lists exact steps, the executor channel, disclosed fields (must be in approved_pii_fields), risks, and the draft/script. 'purchase' is disabled. Show the returned confirmation_text to the user verbatim; it contains a confirmation code the user replies with.",
      "inputSchema": O({"action_type": {"type": "string", "enum": list(ACTION_TYPES)}, "target_ref": S, "summary": S,
@@ -148,7 +172,7 @@ TOOLS = [
      "description": "Every action request with its confirmation text, run, and outcome, newest first.",
      "inputSchema": O({"limit": {"type": "integer", "minimum": 1, "maximum": 200}}), "annotations": RO},
     {"name": "expire_action_requests", "title": "Expire stale requests",
-     "description": "Routine R10: mark unconfirmed requests past expires_at as expired.", "inputSchema": O({})},
+     "description": "Routine R10: mark unconfirmed requests past expires_at as expired; returns a last reminder text for a trial cancel request that expired before the trial ended.", "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
     {"name": "delete_all_data", "title": "Delete all data",
      "description": f"PV-8: delete the database rows and evidence files. Only when the user asked; confirm must equal '{DELETE_PHRASE}'. Afterwards remind the user they can revoke connector access in their Google account.",
      "inputSchema": O({"confirm": S}, ["confirm"]), "annotations": {"destructiveHint": True}},
@@ -205,6 +229,21 @@ class App:
                                                                  a.get("status"))}
         if name == "add_subscription":
             return {"subscription": subs_mod.add_manual_subscription(st, **a)}
+        if name == "refresh_after_scan":
+            return r1_daily_scan.after_ingest(st, gate, self.resolver)
+        if name == "detect_duplicates":
+            res = dup_mod.detect(st, self.resolver)
+            return {**res, "text": notifier.format_duplicates(res, a.get("lang", "en"))}
+        if name == "dispatch_reminders":
+            return r3_reminder_dispatch.run(st, gate, a.get("lang", "en"))
+        if name == "run_trial_guard":
+            return r4_trial_guard.run(st, gate, a.get("lang", "en"))
+        if name == "respond_to_trial_reminder":
+            return Trials(st, gate, self.resolver).respond(a["subscription_id"], a["choice"], a.get("lang", "en"))
+        if name == "preauthorize_trial_cancel":
+            return Trials(st, gate, self.resolver).preauthorize(a["subscription_id"], a.get("lang", "en"))
+        if name == "stop_trial_auto_cancel":
+            return Trials(st, gate, self.resolver).revoke(a["subscription_id"], a["user_message"])
         if name == "create_action_request":
             from core.util import parse_iso
             for k in ("expires_at", "execute_not_before"):
@@ -259,7 +298,7 @@ class App:
         if name == "audit_timeline":
             return {"timeline": gate.timeline()[: a.get("limit", 50)]}
         if name == "expire_action_requests":
-            return {"expired": gate.expire_due()}
+            return r10_expiry.run(st, gate, a.get("lang", "en"))
         if name == "delete_all_data":
             if a.get("confirm") != DELETE_PHRASE:
                 raise ValueError(f"confirm must equal '{DELETE_PHRASE}'")

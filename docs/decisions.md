@@ -150,3 +150,41 @@ should be confirmed by Charles before any real call or live cancellation.
   Increases are computed when asked for and are not stored. Deduplicating notifications belongs to the routines
   (M1b).
 
+## Engineering decisions (M1b: duplicates, trials, reminders, undo)
+- **D21 Duplicates (FR-1-6).**
+  - Rule (a): the same merchant is active more than once, across accounts, card endings, or channels. On a single
+    account it is flagged `suspected_same_subscription` and both rows are kept (10.1).
+  - Rule (c): a declared household address appears among the recipients of mail in the user's own mailbox. Only
+    that address is stored (`extracted.household_recipient`). Other recipients are dropped, and other mailboxes
+    are never read (PV-7).
+  - Rule (b): category overlap. Thresholds are video >= 3 and cloud storage >= 2 (spec), plus music >= 2 and
+    VPN >= 2.
+  - Group ids are deterministic. Family plan prices are not in the registry, so no saving amount is promised for
+    them.
+- **D22 Trial end inference (FR-1-7).** The basis is, in order: a stated end date, a stated length (start + N
+  days), or else the shortest common length, 7 days. The short default makes reminders early rather than late. A
+  guessed end is capped at confidence 0.45 (needs review), the reminder says it is a guess, and pre-authorization
+  is refused for it.
+- **D23 Reminders (FR-1-8, R3).**
+  - `trial_end` reminders fire at T-2 and T-1, 09:00 in the user's time zone (DST-aware). If both slots have
+    passed, one overdue T-1 reminder is scheduled.
+  - A changed end date dismisses and reschedules. "Keep", or an approved cancellation, stops the reminders.
+  - Quiet hours (default 22:00-08:00) hold delivery. At most one reminder per trial per run.
+  - Remind-later snoozes until the next 09:00, capped at 20:00 on T-1, and is refused after that.
+- **D24 Pre-authorization and undo (FR-1-9, Q4 default).**
+  - The pre-authorization is an ordinary cancel request with `constraints.preauthorized` and `execute_not_before`
+    = T-1 11:00 local. It still needs the user's explicit confirmation.
+  - R4 posts the 2-hour warning at T-1 09:00. A request is `ready_to_execute` only after the warning has been out
+    for 2 hours, so a late warning delays execution.
+  - Undo (`stop_trial_auto_cancel`) accepts any stop or undo wording, because revoking is the safe direction.
+    `取消` alone is ambiguous and does not count.
+  - Pre-authorization is limited to the browser path. Store-billed, phone, and email cancellations are manual
+    steps in M1b. A bot-placed call needs an approved script and the Q3 decision. A bot-sent email needs its exact
+    draft approved.
+- **D25 Routines as code.** R1, R3, R4, and R10 are plain functions in `routines/`, also exposed as MCP tools. They
+  return texts for the user's own chat and never send, call, cancel, or start a run. Scheduling them as Grok Bot
+  routines is deploy configuration and is held for Charles's approval.
+- **Q11 (not decided here).** A cancel request for a merchant whose registry entry is not `verified` carries an
+  "unverified" risk note (`modules/trials.py: WARN_UNVERIFIED_MERCHANTS`, TODO(Q11)). Who maintains the registry and
+  how entries become verified is still Charles's decision.
+

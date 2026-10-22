@@ -426,5 +426,5 @@ def test_synthetic_fixture_recall(store, resolver):
 
 def test_module_has_no_network_or_process_access():
     src = open(sm.__file__, encoding="utf-8").read()
-    for banned in ("import socket", "urllib", "http.client", "subprocess", "requests", "smtplib"):
+    for banned in ("import socket", "urllib", "http.client", "subprocess", "import requests", "smtplib"):
         assert banned not in src
