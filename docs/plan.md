@@ -32,7 +32,8 @@ Source: `docs/spec.md` chapter 12 (milestones), with the defaults in `docs/decis
 | Unconfirmed actions cannot execute (negative tests) | `tests/test_action_gate.py`, `tests/test_server.py` (pending, vague reply, rejected, expired, revoked, amended, purchase, forged `approved` row, revoke window) |
 
 **Not in M0:** routines/scheduling, real executors (browser, Bland, email), module logic, reports. Deploy config
-(connector launch file, routine provisioning) is held back because it needs Charles's approval under `AGENTS.md`.
+(connector launch file, routine provisioning) was held back because it needs Charles's approval under `AGENTS.md`.
+Charles approved enabling R1, R3, R4, and R10 by default on 2026-10-22 (M1b, D31).
 
 ## M1 - Subscriptions and free trials, module 1 (about 2 weeks)
 

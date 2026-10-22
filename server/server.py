@@ -29,6 +29,7 @@ from core.store import USER_FIELDS, Store  # noqa: E402
 from modules import duplicates as dup_mod, subscriptions as subs_mod  # noqa: E402
 from modules.trials import CHOICES as TRIAL_CHOICES, Trials  # noqa: E402
 from routines import r1_daily_scan, r3_reminder_dispatch, r4_trial_guard, r10_expiry  # noqa: E402
+from routines import schedule as routine_schedule  # noqa: E402
 
 NAME, VERSION = "money-saver", "0.1.0"
 DELETE_PHRASE = "DELETE ALL MY DATA"
@@ -89,16 +90,16 @@ TOOLS = [
                       ["display_name", "amount_cents", "period"])},
     {"name": "refresh_after_scan", "title": "Refresh after a Gmail scan (R1)",
      "description": "Routine R1 after ingest_messages/complete_scan: rebuild the subscription inventory, detect duplicates, and schedule trial reminders. Idempotent.",
-     "inputSchema": O({})},
+     "inputSchema": O({"scheduled": {"type": "boolean", "description": "true when called by the scheduled routine; skipped if the user turned the routine off"}})},
     {"name": "detect_duplicates", "title": "Duplicate subscriptions",
      "description": "FR-1-6: the same merchant billed more than once (a), overlapping services in one category (b), and the same merchant for household members (c). Family plan prices are not checked.",
      "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
     {"name": "dispatch_reminders", "title": "Send due reminders (R3)",
      "description": "Routine R3 (hourly): due trial reminders as texts to post in the user's own chat, with options cancel/keep/remind_later. Held during quiet hours.",
-     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
+     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}, "scheduled": {"type": "boolean", "description": "true when called by the scheduled routine; skipped if the user turned the routine off"}})},
     {"name": "run_trial_guard", "title": "Trial guard (R4)",
      "description": "Routine R4 (daily 09:00): schedule T-2/T-1 reminders, post the 2-hour warning before a pre-authorized cancellation, and list approved cancellations whose undo window has passed. Never executes anything.",
-     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
+     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}, "scheduled": {"type": "boolean", "description": "true when called by the scheduled routine; skipped if the user turned the routine off"}})},
     {"name": "respond_to_trial_reminder", "title": "User's answer to a trial reminder",
      "description": "keep stops the reminders; remind_later snoozes (never past 20:00 the day before the trial ends); cancel creates a cancel request that still needs explicit confirmation (show its confirmation_text).",
      "inputSchema": O({"subscription_id": S, "choice": {"type": "string", "enum": list(TRIAL_CHOICES)}, "lang": {"type": "string", "enum": ["en", "zh"]}},
@@ -172,7 +173,14 @@ TOOLS = [
      "description": "Every action request with its confirmation text, run, and outcome, newest first.",
      "inputSchema": O({"limit": {"type": "integer", "minimum": 1, "maximum": 200}}), "annotations": RO},
     {"name": "expire_action_requests", "title": "Expire stale requests",
-     "description": "Routine R10: mark unconfirmed requests past expires_at as expired; returns a last reminder text for a trial cancel request that expired before the trial ended.", "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
+     "description": "Routine R10: mark unconfirmed requests past expires_at as expired; returns a last reminder text for a trial cancel request that expired before the trial ended.", "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}, "scheduled": {"type": "boolean", "description": "true when called by the scheduled routine; skipped if the user turned the routine off"}})},
+    {"name": "list_routines", "title": "Routine schedule",
+     "description": "R1 daily scan 05:30, R3 reminders hourly, R4 trial guard 09:00, R10 request expiry hourly, all on by default (user's time zone). Register each enabled routine as a Grok Bot scheduled task with its prompt. Routines only read and post to the user's own chat; they never send to third parties, call, cancel, or start a run.",
+     "inputSchema": O({}), "annotations": RO},
+    {"name": "set_routine_enabled", "title": "Turn a routine on or off",
+     "description": "Only when the user asked. R1, R3 and R4 can be turned off; R10 cannot. Then add or remove the scheduled task.",
+     "inputSchema": O({"routine_id": {"type": "string", "enum": [r["id"] for r in routine_schedule.ROUTINES]}, "enabled": B},
+                      ["routine_id", "enabled"])},
     {"name": "delete_all_data", "title": "Delete all data",
      "description": f"PV-8: delete the database rows and evidence files. Only when the user asked; confirm must equal '{DELETE_PHRASE}'. Afterwards remind the user they can revoke connector access in their Google account.",
      "inputSchema": O({"confirm": S}, ["confirm"]), "annotations": {"destructiveHint": True}},
@@ -191,6 +199,14 @@ class App:
     def call(self, name, a):
         a = dict(a or {})
         st, gate = self.store, self.gate
+        rid = routine_schedule.TOOL_TO_ROUTINE.get(name)
+        if rid and a.pop("scheduled", False) is True and not routine_schedule.is_enabled(st, rid):
+            return routine_schedule.skipped(rid)
+        a.pop("scheduled", None)
+        if name == "list_routines":
+            return routine_schedule.list_routines(st)
+        if name == "set_routine_enabled":
+            return routine_schedule.set_enabled(st, a["routine_id"], a["enabled"])
         if name == "get_context":
             return {"settings": st.get_user(),
                     "counts": {t: st.count(t) for t in ("source_messages", "subscriptions", "action_requests", "savings_ledger")},

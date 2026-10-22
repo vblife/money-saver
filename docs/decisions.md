@@ -67,7 +67,7 @@
   not scanned, so random hex cannot be mistaken for a card number. Snippets and evidence notes are redacted before
   storage.
 - **D10 Held back from M0:** connector launch config and routine schedules (deploy config), and real executors. These
-  need Charles's approval under `AGENTS.md`.
+  need Charles's approval under `AGENTS.md`. Charles approved the R1, R3, R4, and R10 schedules on 2026-10-22 (D31).
 - **D11 Confirmation trust model.** The MCP server cannot see the chat. It only gets the `user_message` the agent
   passes to `confirm_action_request`, so it cannot prove that a human typed the reply. The gate narrows what an agent
   can claim, and the guarantees and limits are:

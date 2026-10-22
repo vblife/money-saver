@@ -35,8 +35,12 @@ The `money-saver` MCP server is the system of record. Use its tools for every wr
    schedules trial reminders.
 2. `detect_duplicates` covers the same service billed twice, overlapping services, and household members paying
    separately. Family plan prices are not checked, so never promise a saving amount for a family plan.
-3. Routines: R3 (`dispatch_reminders`, hourly) and R4 (`run_trial_guard`, 09:00) return texts. Post each one to
-   the user in chat, unchanged. Reminders offer Cancel, Keep, and Remind me later. Pass the user's choice to
+3. Routines are on by default: R1 daily scan (05:30), R3 `dispatch_reminders` (hourly), R4 `run_trial_guard`
+   (09:00), and R10 `expire_action_requests` (hourly), in the user's time zone. On first use, call `list_routines`
+   and register each enabled routine as a scheduled task with its prompt. If the user asks to turn one off, call
+   `set_routine_enabled` and remove the task (R10 stays on). Routines only read and post to the user's chat. A
+   routine never starts an action run; a cancellation still needs the user's explicit confirmation. Post each
+   returned text to the user in chat, unchanged. Reminders offer Cancel, Keep, and Remind me later. Pass the user's choice to
    `respond_to_trial_reminder`.
 4. Choosing "cancel" only creates an action request. Show its `confirmation_text` and wait for explicit
    confirmation as in section 2.

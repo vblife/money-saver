@@ -25,7 +25,7 @@ config/       merchant_registry.json, gmail_queries.json, call_scripts/
 core/         store, gmail_scanner, classifier, extractor, merchant_resolver, action_gate, evidence, ledger, notifier, privacy
 executors/    gate-enforcing executor base (browser / Bland / email executors arrive in M1+)
 modules/      module logic (M1+)
-routines/     scheduled routines R1-R10 (M1+)
+routines/     scheduled routines (R1, R3, R4, R10 on by default; registry in routines/schedule.py)
 reports/      weekly digest and monthly report (M2)
 server/       MCP server (Python stdlib, JSON-RPC over stdio)
 skills/       agent skills (English only)
