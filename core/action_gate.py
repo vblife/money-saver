@@ -258,14 +258,13 @@ class ActionGate:
         for step in steps:
             privacy.assert_no_forbidden_secrets(step, field="plan_steps")
 
-    @staticmethod
-    def _check_call_script(row: dict[str, Any]) -> None:
-        """D30: every call script must be the generated identity block plus identity-free task steps, for the
-        name in constraints.call_user_name. Fails closed: any error, including an unreadable policy, blocks it."""
-        c = row.get("constraints") or {}
+    def _check_call_script(self, row: dict[str, Any]) -> None:
+        """D30: every call script must be the generated identity block plus identity-free task steps. The names
+        are bound to the ones the user saved (notification_prefs.call_identity); a request naming anyone else is
+        rejected. Fails closed: any error, including an unreadable policy, blocks it."""
         try:
-            call_policy.validate_call_draft(row.get("draft_content"), c.get("call_user_name"),
-                                            c.get("account_holder_name"))
+            name, holder = call_policy.check_against_saved(self.store, row.get("constraints"))
+            call_policy.validate_call_draft(row.get("draft_content"), name, holder)
         except Exception as exc:  # noqa: BLE001 - fail closed on anything
             raise GateError(f"call script rejected by the call honesty policy (D30): {exc}") from exc
 

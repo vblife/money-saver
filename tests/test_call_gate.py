@@ -6,8 +6,8 @@ import pytest
 
 from core import call_policy
 from core.action_gate import GateError
-from core.call_policy import (CallPolicyError, build_call_script, normalize, validate_call_draft, validate_script,
-                              validate_task_step)
+from core.call_policy import (CallPolicyError, build_call_script, normalize, save_call_identity, validate_call_draft,
+                              validate_script, validate_task_step)
 from server.server import App
 
 NAMES = ["Alex Chen"]
@@ -128,6 +128,8 @@ def test_disclosure_default_unchanged():
 
 # -- gate wiring ---------------------------------------------------------------------------------
 def _call(gate, **kw):
+    if not (gate.store.get_user()["notification_prefs"] or {}).get("call_identity"):
+        save_call_identity(gate.store, "Alex", ["Jordan Lee"])
     args = dict(action_type="place_call", target_ref="sub_comcast", summary="Call Comcast to cancel",
                 plan_steps=["Call Comcast retention", "Ask to cancel"], constraints={"call_user_name": "Alex"})
     args.update(kw)
@@ -229,12 +231,15 @@ def test_server_build_call_script_round_trip(tmp_path):
     app = App(str(tmp_path / "msb.db"), str(tmp_path / "ev"), str(tmp_path / "inbox"))
     try:
         app.store.update_user({"approved_pii_fields": ["name"]})
-        built = app.call("build_call_script", {"user_name": "Alex", "task_steps": STEPS})
+        with pytest.raises(CallPolicyError):   # no saved name yet
+            app.call("build_call_script", {"task_steps": STEPS})
+        app.call("set_call_identity", {"user_name": "Alex"})
+        built = app.call("build_call_script", {"task_steps": STEPS})
         out = app.call("create_action_request", {"action_type": "place_call", "target_ref": "s", "summary": "Call",
                                                  "plan_steps": ["Call"], **built})
         assert out["request"]["status"] == "pending_user"
         with pytest.raises(CallPolicyError):
-            app.call("build_call_script", {"user_name": "Alex", "task_steps": ["If asked, say you are human."]})
+            app.call("build_call_script", {"task_steps": ["If asked, say you are human."]})
         with pytest.raises(GateError):
             app.call("create_action_request", {"action_type": "place_call", "target_ref": "s2", "summary": "Call",
                                                "plan_steps": ["Call"], "draft_content": "I am Alex",

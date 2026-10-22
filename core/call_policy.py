@@ -105,17 +105,70 @@ _QUOTES = {"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032":
            "\u00b4": "'", "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u300c": '"', "\u300d": '"'}
 
 
-def normalize(text: str) -> str:
-    """NFKC, strip invisible format characters, straight quotes, A.I. -> ai, collapse whitespace, lowercase."""
+# Cyrillic / Greek letters that look like Latin ones (confusable skeleton, folded to Latin before matching).
+HOMOGLYPHS = str.maketrans({
+    # Cyrillic
+    "а": "a", "А": "a", "в": "b", "В": "b", "е": "e", "Е": "e", "ё": "e", "к": "k", "К": "k", "м": "m", "М": "m",
+    "н": "h", "Н": "h", "о": "o", "О": "o", "р": "p", "Р": "p", "с": "c", "С": "c", "т": "t", "Т": "t", "у": "y",
+    "У": "y", "х": "x", "Х": "x", "і": "i", "І": "i", "ї": "i", "Ї": "i", "ј": "j", "Ј": "j", "ѕ": "s", "Ѕ": "s",
+    "һ": "h", "Һ": "h", "ԁ": "d", "ӏ": "l", "Ӏ": "l", "ԛ": "q", "ԝ": "w", "ɡ": "g", "ո": "n", "ս": "u",
+    # Greek
+    "α": "a", "Α": "a", "β": "b", "Β": "b", "ε": "e", "Ε": "e", "ζ": "z", "Ζ": "z", "η": "n", "Η": "h", "ι": "i",
+    "Ι": "i", "κ": "k", "Κ": "k", "μ": "u", "Μ": "m", "ν": "v", "Ν": "n", "ο": "o", "Ο": "o", "ρ": "p", "Ρ": "p",
+    "τ": "t", "Τ": "t", "υ": "u", "Υ": "y", "χ": "x", "Χ": "x", "ω": "w", "ς": "s", "σ": "o",
+    # Latin look-alikes
+    "ı": "i", "ł": "l", "ø": "o", "ß": "ss",
+})
+LEET = str.maketrans({"4": "a", "@": "a", "3": "e", "1": "i", "!": "i", "|": "l", "0": "o", "5": "s", "$": "s",
+                      "7": "t", "8": "b", "9": "g"})
+
+
+def fold(text: str) -> str:
+    """NFKC, invisible characters removed, quotes straightened, homoglyphs folded to Latin."""
     t = unicodedata.normalize("NFKC", text)
     t = "".join(ch for ch in t if unicodedata.category(ch) != "Cf")
     for k, v in _QUOTES.items():
         t = t.replace(k, v)
-    t = t.lower()
+    t = t.translate(HOMOGLYPHS)
+    out, prev_latin = [], False
+    for ch in unicodedata.normalize("NFD", t):
+        if unicodedata.category(ch) == "Mn" and prev_latin:
+            continue                                  # drop accents on Latin letters (hùmán -> human)
+        out.append(ch)
+        prev_latin = ch.isascii() and ch.isalpha()
+    return unicodedata.normalize("NFC", "".join(out))
+
+
+def normalize(text: str) -> str:
+    """fold(), A.I. -> ai, collapse whitespace, lowercase."""
+    t = fold(text).lower()
     t = re.sub(r"(?<![a-z])a\s*[.\-_*]\s*i\b\.?", "ai", t)          # a.i. / a-i / a. i.
     t = re.sub(r"(?<![a-z])b\s*[.\-_*]\s*o\s*[.\-_*]\s*t\b\.?", "bot", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t
+
+
+def _collapse_spaced(t: str) -> str:
+    """Join runs of single letters split by spaces or punctuation: 'h u m a n' -> 'human', 'a i' -> 'ai'."""
+    return re.sub(r"(?<![a-z0-9])[a-z](?:[\s.\-_*/]+[a-z](?![a-z0-9]))+",
+                  lambda m: re.sub(r"[^a-z]", "", m.group(0)), t)
+
+
+def _unleet(t: str) -> str:
+    """Digit/symbol substitutions inside words that also contain letters: 'hum4n' -> 'human', 'b0t' -> 'bot'."""
+    return re.sub(r"[a-z0-9@$!|]*[a-z][a-z0-9@$!|]*",
+                  lambda m: m.group(0).translate(LEET) if re.search(r"[a-z]", m.group(0)) and
+                  re.search(r"[0-9@$!|]", m.group(0)) else m.group(0), t)
+
+
+def variants(text: str) -> list[str]:
+    """Every normalized form a check must reject: plain, spaced letters joined, digit substitutions undone."""
+    n = normalize(text)
+    c = _collapse_spaced(n)
+    # an article before a spaced-out word would be glued onto it ('a h u m a n' -> 'ahuman'); drop it first
+    c2 = _collapse_spaced(re.sub(r"(?<![a-z])(?:an?|i)\s+(?=[a-z][\s.\-_*/]+[a-z](?![a-z0-9]))", "", n))
+    out = [n, c, c2, _unleet(n), _unleet(c), _unleet(c2)]
+    return list(dict.fromkeys(out))
 
 
 def _cjk(text: str) -> str:
@@ -177,6 +230,13 @@ ZH_PATTERNS = [
     r"假装|冒充|扮演|伪装|装作|充当|冒名",
     r"(?:回避|岔开|转移话题|转移注意|不要承认|别承认|不承认|否认|不要透露|别透露|不透露|不要说|别说|隐瞒|含糊|敷衍|装傻|绕开|避而不答|不回答)",
 ]
+EN_PATTERNS += [
+    # unconditional yes/no to a question (the question itself is often the identity check)
+    r"\bif (?:they|anyone|someone|somebody|he|she|the (?:agent|rep\w*|caller|person)|asked|you(?:'re| are) asked)\b"
+    r"[^.!?\n]*\b(?:say|answer|reply|respond|tell them)\w*\s+(?:with\s+)?[\"']?(?:yes|no|nope|yeah|yep|correct|"
+    r"right|of course|absolutely|definitely)\b",
+    r"\b(?:always|just|simply)\s+(?:say|answer|reply|respond)\w*\s+(?:yes|no)\b",
+]
 _EN = [re.compile(p) for p in EN_PATTERNS]
 _ZH = [re.compile(p) for p in ZH_PATTERNS]
 
@@ -206,39 +266,63 @@ def validate_script(text: str, names: Iterable[str] = ()) -> None:
     first-person or second-person claim to be them is rejected."""
     if not isinstance(text, str) or not text.strip():
         raise CallPolicyError("call script is empty")
-    norm, cjk = normalize(text), _cjk(text)
-    for sentence in re.split(r"(?<=[.!?;\n])\s+|[。！？；\n]", norm):
-        for rx in _EN:
-            m = rx.search(sentence)
-            if m:
-                raise CallPolicyError(f"call script makes a forbidden identity claim or evasion: {m.group(0)!r}")
+    forms, cjk = variants(text), _cjk(text)
+    norm = forms[0]
+    for form in forms:
+        for sentence in re.split(r"(?<=[.!?;\n])\s+|[。！？；\n]", form):
+            for rx in _EN:
+                m = rx.search(sentence)
+                if m:
+                    raise CallPolicyError(f"call script makes a forbidden identity claim or evasion: {m.group(0)!r}")
     for rx in _ZH:
         m = rx.search(cjk)
         if m:
             raise CallPolicyError(f"call script makes a forbidden identity claim or evasion: {m.group(0)!r}")
     for rx in _name_patterns(names):
-        m = rx.search(norm) or rx.search(cjk)
+        m = next((x for x in (rx.search(f) for f in forms) if x), None) or rx.search(cjk)
         if m:
             raise CallPolicyError(f"call script impersonates the user: {m.group(0)!r}")
 
 
 # -- allowlist structure -------------------------------------------------------------------
 IDENTITY_TOPIC = re.compile(
-    rf"\b(?:{AI}|human\w*|person|persons|real one|identity|who you are|who is calling|"
-    r"pretend\w*|impersonat\w*|disclos\w* (?:that|what) you|are you (?:a|an|real))\b")
-IDENTITY_TOPIC_ZH = re.compile(r"(?<![a-z])ai(?![a-z])|人工智能|机器人|机器|真人|人类|本人|身份|录音|自动|假装|冒充|扮演|是不是人|是人吗")
+    rf"\b(?:{AI}|human\w*|person|persons|real one|identity|who you are|who is calling|who'?s calling|"
+    r"pretend\w*|impersonat\w*|disclos\w* (?:that|what) you|are you (?:a|an|real)|"
+    r"software|computer|machine\w*|(?<!loyalty )(?<!rewards )(?<!membership )(?<!points )(?<!referral )"
+    r"(?<!discount )(?<!partner )(?<!retention )(?<!promo )(?<!promotional )(?<!savings )(?<!benefits )program\w*|"
+    r"agent|agents|representative|rep|caller|operator|assistant|voice|flesh|living|alive|real|genuine|"
+    r"your name|my name|name is|named|call (?:yourself|me)|go by|introduce yourself|sign (?:as|off as)|"
+    r"spouse|husband|wife|partner(?! offer| discount| deal| perk| site| store)|boyfriend|girlfriend|fianc\w*|family(?! plan| sharing| subscription| bundle| tier| pack)|relative|son|daughter|mother|father|mom|dad|"
+    r"parent|brother|sister|sibling|child|guardian|caregiver|roommate|household member|"
+    r"authori[sz]\w*|power of attorney|attorney|proxy|on file as|listed as|account manager|secondary user|"
+    r"in person|myself|yourself|themselves|answer (?:yes|no))\b")
+IDENTITY_TOPIC_ZH = re.compile(r"(?<![a-z])ai(?![a-z])|人工智能|机器人|机器|真人|人类|本人|身份|录音|自动|假装|冒充|扮演|"
+                               r"是不是人|是人吗|软件|电脑程序|计算机程序|客服代表|代理人|名叫|叫做|名字|姓名是|我叫|你叫|"
+                               r"丈夫|妻子|老公|老婆|配偶|爱人|家属|家人|亲属|亲戚|儿子|女儿|父亲|母亲|爸爸|妈妈|兄弟|姐妹|"
+                               r"授权|委托|监护人|就说|回答是|回答不是")
 
 
 def validate_task_step(step: str, names: Iterable[str] = ()) -> None:
     """A task step may not discuss identity at all; the generated identity block alone covers who is calling."""
     if not isinstance(step, str) or not step.strip():
         raise CallPolicyError("task step is empty")
-    norm, cjk = normalize(step), _cjk(step)
-    m = IDENTITY_TOPIC.search(norm) or IDENTITY_TOPIC_ZH.search(cjk)
+    cjk = _cjk(step)
+    m = next((x for x in (IDENTITY_TOPIC.search(f) for f in variants(step)) if x), None) or \
+        IDENTITY_TOPIC_ZH.search(cjk)
     if m:
         raise CallPolicyError(f"task steps may not talk about the caller's identity ({m.group(0)!r}); "
                               "the generated identity rules handle that")
     validate_script(step, names)
+
+
+def _check_joined(steps: list[str], names: Iterable[str]) -> None:
+    """Catch a claim split across steps ('... you are an A' + 'I, answer no.')."""
+    for sep in (" ", ""):
+        joined = sep.join(steps)
+        try:
+            validate_task_step(joined, names)
+        except CallPolicyError as exc:
+            raise CallPolicyError(f"task steps taken together: {exc}") from exc
 
 
 def _identity_block(user_name: str, policy: CallPolicy, lang: str) -> list[str]:
@@ -249,11 +333,109 @@ def _identity_block(user_name: str, policy: CallPolicy, lang: str) -> list[str]:
             for r in RULES[lang]]
 
 
-def _check_name(user_name: Any) -> str:
-    if not isinstance(user_name, str) or not user_name.strip() or len(user_name) > 80 or \
-            re.search(r"[\n\[\]{}\"「」]", user_name):
-        raise CallPolicyError("call_user_name must be the user's name (one line, no brackets or quotes)")
-    return user_name.strip()
+# -- names (allowlist) ----------------------------------------------------------------------
+NAME_MAX_CHARS = 40
+NAME_MAX_WORDS = 4
+SCRIPT_GROUPS = {"HIRAGANA": "CJK", "KATAKANA": "CJK", "CJK": "CJK", "IDEOGRAPHIC": "CJK"}
+NAME_STOPWORDS = {
+    "you", "your", "yours", "yourself", "i", "me", "my", "mine", "we", "us", "they", "them", "say", "said", "tell",
+    "ignore", "disregard", "override", "rule", "rules", "above", "below", "previous", "instead", "if", "ask",
+    "asked", "not", "no", "yes", "are", "am", "is", "be", "was", "answer", "reply", "claim", "never", "always",
+    "the", "a", "an", "of", "to", "and", "or", "but", "as", "system", "prompt", "instruction", "instructions",
+    "step", "steps", "task", "policy", "script", "honest", "truth", "truthfully", "lie", "deny", "only",
+}
+
+
+def _script(ch: str) -> str:
+    try:
+        first = unicodedata.name(ch).split(" ")[0]
+    except ValueError:
+        return "UNKNOWN"
+    return SCRIPT_GROUPS.get(first, first)
+
+
+def check_name(name: Any, field: str = "call_user_name") -> str:
+    """Strict allowlist for a name that goes into the identity rules: Unicode letters in ONE script (CJK may mix
+    Han and kana), single spaces, hyphens and apostrophes between letters, at most 40 characters and 4 words. No
+    digits, punctuation, compatibility forms (full-width), mixed scripts, identity terms, or instruction words."""
+    if not isinstance(name, str):
+        raise CallPolicyError(f"{field} must be a string")
+    n = unicodedata.normalize("NFC", name.strip().replace("\u2019", "'"))
+    if not n or len(n) > NAME_MAX_CHARS:
+        raise CallPolicyError(f"{field} must be 1-{NAME_MAX_CHARS} characters")
+    if unicodedata.normalize("NFKC", n) != n:
+        raise CallPolicyError(f"{field} uses full-width or compatibility characters")
+    words = n.split(" ")
+    if len(words) > NAME_MAX_WORDS:
+        raise CallPolicyError(f"{field} may have at most {NAME_MAX_WORDS} words")
+    scripts = set()
+    for w in words:
+        for part in re.split(r"[-']", w):
+            if not part:
+                raise CallPolicyError(f"{field}: spaces, hyphens and apostrophes must sit between letters")
+            for i, ch in enumerate(part):
+                if unicodedata.category(ch) == "Mn" and i > 0:
+                    continue
+                if not ch.isalpha():
+                    raise CallPolicyError(f"{field} may contain only letters, spaces, hyphens and apostrophes")
+                scripts.add(_script(ch))
+    if len(scripts) != 1:
+        raise CallPolicyError(f"{field} mixes writing systems ({', '.join(sorted(scripts))}); use one script")
+    folded = {w for f in variants(n) for w in re.split(r"[\s'-]+", f)}
+    bad = folded & NAME_STOPWORDS
+    if bad:
+        raise CallPolicyError(f"{field} contains a word that is not part of a name: {sorted(bad)}")
+    m = next((x for x in (IDENTITY_TOPIC.search(f) for f in variants(n)) if x), None) or \
+        IDENTITY_TOPIC_ZH.search(_cjk(n))
+    if m:
+        raise CallPolicyError(f"{field} contains an identity term ({m.group(0)!r})")
+    validate_script(n)
+    return n
+
+
+_check_name = check_name
+
+
+def validate_call_identity(value: Any) -> dict[str, Any]:
+    """``notification_prefs.call_identity`` as saved by the user: {user_name, account_holder_names: [..]}."""
+    if not isinstance(value, dict) or set(value) - {"user_name", "account_holder_names"}:
+        raise CallPolicyError("call_identity must be {user_name, account_holder_names}")
+    holders = value.get("account_holder_names", [])
+    if not isinstance(holders, list) or len(holders) > 5:
+        raise CallPolicyError("account_holder_names must be a list of at most 5 names")
+    return {"user_name": check_name(value.get("user_name"), "user_name"),
+            "account_holder_names": [check_name(h, "account_holder_name") for h in holders]}
+
+
+def saved_identity(store: Any) -> dict[str, Any]:
+    ident = (store.get_user().get("notification_prefs") or {}).get("call_identity")
+    if not ident:
+        raise CallPolicyError("no saved call identity: ask the user for their name and save it with "
+                              "set_call_identity before preparing a call")
+    return validate_call_identity(ident)
+
+
+def save_call_identity(store: Any, user_name: str, account_holder_names: list[str] | None = None) -> dict[str, Any]:
+    ident = validate_call_identity({"user_name": user_name, "account_holder_names": list(account_holder_names or [])})
+    prefs = dict(store.get_user().get("notification_prefs") or {})
+    prefs["call_identity"] = ident
+    store.update_user({"notification_prefs": prefs})
+    return ident
+
+
+def check_against_saved(store: Any, constraints: dict[str, Any] | None) -> tuple[str, str | None]:
+    """The gate's binding: the request's names must be exactly the names the user saved."""
+    c = constraints or {}
+    ident = saved_identity(store)
+    name = check_name(c.get("call_user_name"))
+    if name != ident["user_name"]:
+        raise CallPolicyError("constraints.call_user_name differs from the user's saved name")
+    holder = c.get("account_holder_name")
+    if holder is not None:
+        holder = check_name(holder, "account_holder_name")
+        if holder not in [ident["user_name"], *ident["account_holder_names"]]:
+            raise CallPolicyError("constraints.account_holder_name is not one of the user's saved names")
+    return name, holder
 
 
 def build_call_instructions(user_name: str, policy: CallPolicy | None = None, lang: str = "en") -> dict[str, Any]:
@@ -275,6 +457,8 @@ def build_call_script(user_name: str, task_steps: list[str], policy: CallPolicy 
     user_name = _check_name(user_name)
     if not isinstance(task_steps, list) or not task_steps:
         raise CallPolicyError("a call script needs at least one task step")
+    if account_holder_name is not None:
+        account_holder_name = check_name(account_holder_name, "account_holder_name")
     names = [user_name] + ([account_holder_name] if account_holder_name else [])
     steps = []
     for s in task_steps:
@@ -282,6 +466,7 @@ def build_call_script(user_name: str, task_steps: list[str], policy: CallPolicy 
             raise CallPolicyError("each task step must be one line")
         validate_task_step(s, names)
         steps.append(s.strip())
+    _check_joined(steps, names)
     lines = [RULES_HEADER] + [f"- {r}" for r in _identity_block(user_name, policy, lang)] + [TASK_HEADER]
     lines += [f"{i}. {s}" for i, s in enumerate(steps, 1)]
     return "\n".join(lines)
@@ -294,7 +479,9 @@ def validate_call_draft(draft: Any, user_name: Any, account_holder_name: str | N
         raise CallPolicyError("call script is empty")
     policy = policy or load_policy()
     user_name = _check_name(user_name)
-    names = [user_name] + ([account_holder_name] if isinstance(account_holder_name, str) and account_holder_name.strip() else [])
+    if account_holder_name is not None:
+        account_holder_name = check_name(account_holder_name, "account_holder_name")
+    names = [user_name] + ([account_holder_name] if account_holder_name else [])
     lines = draft.strip().split("\n")
     if TASK_HEADER not in lines:
         raise CallPolicyError(f"call script must be built with build_call_script (missing {TASK_HEADER})")
@@ -313,4 +500,5 @@ def validate_call_draft(draft: Any, user_name: Any, account_holder_name: str | N
             raise CallPolicyError(f"task line {i} must be '{i}. <step>'")
         validate_task_step(m.group(1), names)
         steps.append(m.group(1))
+    _check_joined(steps, names)
     return {"lang": lang, "task_steps": steps}

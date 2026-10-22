@@ -6,7 +6,7 @@ import pytest
 from core.action_gate import (ALLOWED_EXECUTORS, ActionGate, ActionNotAllowedError, GateError,
                               InvalidTransitionError, NotApprovedError, NotExplicitConfirmationError,
                               is_explicit_confirmation, sha256_text)
-from core.call_policy import build_call_script
+from core.call_policy import build_call_script, save_call_identity
 from core.evidence import EvidenceStore
 from core.privacy import ForbiddenDataError
 from executors.base import GuardedExecutor
@@ -24,6 +24,8 @@ def make(gate, **kw):
                 expected_saving_cents=1799, risk_notes="Access continues until 10/24")
     args.update(kw)
     executor = args.get("executor") or (ALLOWED_EXECUTORS.get(args["action_type"]) or ("",))[0]
+    if executor == "bland_call":
+        save_call_identity(gate.store, "Alex")   # the gate binds call scripts to the user's saved name
     if executor == "bland_call" and args.get("draft_content") == DRAFT:
         args["draft_content"] = CALL_DRAFT
         args["constraints"] = {**CALL_C, **(args.get("constraints") or {})}
@@ -311,6 +313,7 @@ def test_default_executor_per_type(gate):
 
 
 def test_switching_channel_requires_reconfirmation(gate):
+    save_call_identity(gate.store, "Alex")
     req = ok(gate, make(gate))
     amended = gate.amend(req["id"], {"executor": "bland_call", "draft_content": CALL_DRAFT, "constraints": CALL_C},
                          "web cancel failed")

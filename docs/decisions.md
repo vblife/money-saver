@@ -206,6 +206,26 @@
     `constraints.account_holder_name` when different) must be set. The identity block must match exactly for that
     name, and every task step must pass. Any error, including a policy file that does not load, rejects the request
     (fail closed). The bot gets a valid script from the `build_call_script` tool.
+  - Names are bound to the user's settings. The user's name, plus any other account-holder names the user lists,
+    is saved with `set_call_identity` in `notification_prefs.call_identity` (existing JSON column, no schema
+    change). The gate requires a saved identity and re-validates it on every check. It rejects a request whose
+    `call_user_name` differs from the saved name, or whose `account_holder_name` is not a saved name.
+    `build_call_script` (tool) takes the name from settings, not from the agent.
+  - Names are allowlisted (`check_name`):
+    - Unicode letters in one script (CJK may mix Han and kana), with single spaces, hyphens, and apostrophes only
+      between letters. At most 40 characters and 4 words.
+    - No digits, punctuation, full-width or compatibility forms, invisible characters, or mixed scripts.
+    - No instruction words ("ignore", "say", "if", "you", ...).
+    - The identity-term and deny-list checks also run on the name.
+    - This closes injection through the name, which appears verbatim in the generated rules.
+  - Task-step checks run on several forms of the text: plain, spaced letters joined ("h u m a n"), Cyrillic and
+    Greek homoglyphs folded to Latin, and digit swaps undone ("hum4n"). They also run on all steps joined together,
+    so a claim cannot be split across steps.
+    - Identity terms now include software, program (not "loyalty program" and similar), machine, agent,
+      representative, caller, your name / named / go by, and family words (spouse, husband, wife, relative, ...).
+      They also include authorized / power of attorney.
+    - Conditional yes/no instructions ("if they ask, answer no") are rejected. Steps should state actions
+      instead.
   - No real calls are placed. Bland calls are still M1d work and still go through the confirmation gate.
 - **D31 Routines on by default.** R1 (daily scan, 05:30), R3 (reminder dispatch, hourly), R4 (trial guard, hourly),
   and R10 (request expiry, hourly) are enabled by default. Each time is in the user's time zone.
@@ -225,5 +245,10 @@
   - Routines only read and post texts to the user's own chat. They never send to third parties, call, cancel, or
     start an action run. Any cancellation still needs the user's explicit confirmation through the action gate.
     Tests check this.
+- **Open decision for Charles: calling as family or an "authorized" person.** Whether a call may say it is
+  the user's spouse or relative, or that it is authorized to act on the account (power of attorney, authorized
+  user), is a business and legal question for M1d. Until Charles decides, it fails closed: task steps with those
+  terms are rejected (`IDENTITY_TOPIC`, D30), and the identity block only ever says "calling on behalf of
+  <user>".
 - **Still open or deferred.** Q11 (who maintains the merchant registry) is still open. The accuracy test with real
   labeled emails (B1) is deferred.

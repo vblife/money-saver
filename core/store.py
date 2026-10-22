@@ -383,6 +383,10 @@ class Store:
             if "routines" in prefs:
                 from routines.schedule import validate_routine_prefs  # local import: routines depends on core
                 validate_routine_prefs(prefs["routines"])
+            if "call_identity" in prefs:
+                from .call_policy import validate_call_identity  # local import: call_policy is optional here
+                prefs = {**prefs, "call_identity": validate_call_identity(prefs["call_identity"])}
+                changes = {**changes, "notification_prefs": prefs}
         if "thresholds" in changes:
             changes = {**changes, "thresholds": {**(user.get("thresholds") or {}),
                                                  **validate_thresholds(changes["thresholds"])}}
