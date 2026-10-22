@@ -64,7 +64,16 @@ def test_stdio_end_to_end(tmp_path):
         bought = c.tool("create_action_request", action_type="purchase", target_ref="x", summary="Buy", plan_steps=["buy"])
         assert bought["isError"]
 
-        assert c.tool("confirm_action_request", request_id=rid, user_message="Confirm cancel Hulu")["structuredContent"]["request"]["status"] == "approved"
+        code = made["confirmation_code"]
+        assert code in made["confirmation_text"]
+        for bad in ("I can't confirm that", "我不批准", "Confirm cancel Hulu", f"don't confirm {code}"):
+            assert c.tool("confirm_action_request", request_id=rid, user_message=bad)["isError"], bad
+        # bare "confirm" without the shown-text digest is not bound to anything
+        assert c.tool("confirm_action_request", request_id=rid, user_message="confirm")["isError"]
+        assert c.tool("confirm_action_request", request_id=rid, user_message=f"confirm {code}",
+                      source="chat:1")["structuredContent"]["request"]["status"] == "approved"
+        wrong_channel = c.tool("start_action_run", request_id=rid, executor="email")
+        assert wrong_channel["isError"] and "approved for 'browser'" in wrong_channel["content"][0]["text"]
         run = c.tool("start_action_run", request_id=rid, executor="browser")["structuredContent"]["run"]
         ev = c.tool("record_evidence", kind="confirmation_email", related_ref="sub_hulu", message_id="m-confirm")["structuredContent"]["evidence"]
         done = c.tool("finish_action_run", run_id=run["id"], outcome="success", evidence_ids=[ev["id"]])["structuredContent"]
@@ -77,13 +86,24 @@ def test_stdio_end_to_end(tmp_path):
         summary = c.tool("ledger_month_summary", year=2026, month=10)["structuredContent"]
         assert summary["verified_cents"] == 1799 and "$17.99" in summary["headline"]
 
+        # digest binding: approve a second request with a bare "confirm" plus the digest of the shown text
+        m2 = c.tool("create_action_request", action_type="cancel_subscription", target_ref="sub_p", summary="Cancel Peacock",
+                    plan_steps=["Open account page", "Cancel"])["structuredContent"]
+        assert c.tool("confirm_action_request", request_id=m2["request"]["id"], user_message="Confirm",
+                      shown_text_sha256="0" * 64)["isError"]
+        assert c.tool("confirm_action_request", request_id=m2["request"]["id"], user_message="Confirm",
+                      shown_text_sha256=m2["confirmation_sha256"])["structuredContent"]["request"]["status"] == "approved"
+        amend_bad = c.tool("amend_action_request", request_id=m2["request"]["id"],
+                           changes={"disclosed_fields": [{"field": "ssn", "value_masked": "123-45-6789"}]}, reason="x")
+        assert amend_bad["isError"]
+
         tl = c.tool("audit_timeline")["structuredContent"]["timeline"]
-        assert tl[0]["request"]["status"] == "executed"
+        assert {t["request"]["id"]: t["request"]["status"] for t in tl}[rid] == "executed"
 
         refused = c.tool("delete_all_data", confirm="yes")
         assert refused["isError"]
         wiped = c.tool("delete_all_data", confirm="DELETE ALL MY DATA")["structuredContent"]
-        assert wiped["deleted"]["action_requests"] == 1
+        assert wiped["deleted"]["action_requests"] == 2
         assert c.rpc("tools/call", {"name": "nope", "arguments": {}})["error"]["code"] == -32602
     finally:
         c.close()

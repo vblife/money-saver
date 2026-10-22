@@ -12,12 +12,18 @@ ACTION_LABELS = {
            "edit": "Change conditions", "saving": "Expected saving", "steps": "What I will do",
            "disclose": "I will share", "risks": "Note", "expires": "This request expires",
            "header": "Please confirm this action", "batch": "Please confirm all {n} actions below",
-           "per_year": "per year"},
+           "per_year": "per year", "channel": "How", "draft": "Exact text",
+           "reply": "To approve, reply exactly: confirm {code}",
+           "reply_batch": "To approve all of them, reply exactly: confirm {codes}"},
     "zh": {"confirm": "确认", "keep": "保留", "later": "稍后提醒", "cancel": "取消",
            "edit": "修改条件", "saving": "预计节省", "steps": "我将执行", "disclose": "将披露",
            "risks": "注意", "expires": "请求有效期至", "header": "请确认以下操作",
-           "batch": "请确认以下 {n} 项操作", "per_year": "年化"},
+           "batch": "请确认以下 {n} 项操作", "per_year": "年化", "channel": "方式", "draft": "完整内容",
+           "reply": "如需批准，请回复：确认 {code}", "reply_batch": "如需全部批准，请回复：确认 {codes}"},
 }
+
+
+CHANNELS = {"browser": "web browser", "bland_call": "phone call (Bland)", "email": "email", "manual": "manual steps"}
 
 
 def money(cents: int | None, currency: str = "USD") -> str:
@@ -38,6 +44,11 @@ def format_action_request(req: dict[str, Any], lang: str = "en") -> str:
     L = _labels(lang)
     lines = [f"{L['header']} [{req['id']}]", f"• {req['summary']}", f"{L['steps']}:"]
     lines += [f"  {i}. {step}" for i, step in enumerate(req["plan_steps"], 1)]
+    if req.get("executor"):
+        lines.append(f"{L['channel']}: {CHANNELS.get(req['executor'], req['executor'])}")
+    if req.get("draft_content"):
+        lines.append(f"{L['draft']}:")
+        lines += [f"  | {line}" for line in req["draft_content"].splitlines()]
     if req.get("disclosed_fields"):
         shown = ", ".join(f"{d['field']}={d.get('value_masked', '')}" for d in req["disclosed_fields"])
         lines.append(f"{L['disclose']}: {shown}")
@@ -52,6 +63,8 @@ def format_action_request(req: dict[str, Any], lang: str = "en") -> str:
     else:
         buttons = [L["confirm"], L["keep"], L["later"]]
     lines.append(" ".join(f"[{b}]" for b in buttons))
+    if req.get("confirmation_code"):
+        lines.append(L["reply"].format(code=req["confirmation_code"]))
     return "\n".join(lines)
 
 
@@ -63,6 +76,9 @@ def format_batch(reqs: list[dict[str, Any]], lang: str = "en") -> str:
         saving = f" ({money(req['expected_saving_cents'])})" if req.get("expected_saving_cents") else ""
         lines.append(f"{i}. [{req['id']}] {req['summary']}{saving}")
     lines.append(f"[{L['confirm']}] [{L['cancel']}]")
+    codes = [r.get("confirmation_code") for r in reqs]
+    if reqs and all(codes):
+        lines.append(L["reply_batch"].format(codes=" ".join(codes)))
     return "\n".join(lines)
 
 

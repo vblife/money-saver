@@ -1,10 +1,16 @@
 """Confirmation gate state machine and negative tests (M0 acceptance: unconfirmed actions cannot execute)."""
+from datetime import timedelta
+
 import pytest
 
-from core.action_gate import (ActionNotAllowedError, GateError, InvalidTransitionError, NotApprovedError,
-                              NotExplicitConfirmationError, is_explicit_confirmation)
+from core.action_gate import (ALLOWED_EXECUTORS, ActionGate, ActionNotAllowedError, GateError,
+                              InvalidTransitionError, NotApprovedError, NotExplicitConfirmationError,
+                              is_explicit_confirmation, sha256_text)
 from core.evidence import EvidenceStore
+from core.privacy import ForbiddenDataError
 from executors.base import GuardedExecutor
+
+DRAFT = "Hello, I am an AI assistant calling on behalf of Alex to cancel the subscription."
 
 
 def make(gate, **kw):
@@ -15,29 +21,116 @@ def make(gate, **kw):
     return gate.create(**args)
 
 
+def ok(gate, req, word="confirm"):
+    return gate.confirm(req["id"], f"{word} {req['confirmation_code']}")
+
+
 def evidence_id(store):
     return EvidenceStore(store, root="/tmp/unused").add_email("m-confirm-1", "sub_hulu", "Your cancellation is confirmed")["id"]
 
 
-# --- explicit confirmation -----------------------------------------------------------------------
-@pytest.mark.parametrize("msg", ["Confirm", "yes, cancel Hulu", "确认取消 Hulu", "Approved - go ahead", "同意", "Confirm all 3"])
-def test_explicit_confirmations(msg):
+# --- explicit confirmation (8.2): allow-list only, fail closed -------------------------------------
+@pytest.mark.parametrize("msg", ["Confirm", "confirm.", "Yes, confirm", "I confirm!", "approve", "Approved",
+                                 "确认", "确认。", "我确认", "同意", "批准", "确认执行", "Confirm all", "全部确认"])
+def test_allowlisted_affirmatives(msg):
     assert is_explicit_confirmation(msg)
 
 
-@pytest.mark.parametrize("msg", ["", "   ", None, "maybe", "I guess so", "whatever", "好像可以", "随便", "confirm?",
-                                 "Yes?", "no", "don't cancel", "不要", "先不确认", "ok", "sounds interesting",
-                                 "probably yes", "wait, confirm later", "也许吧"])
-def test_vague_negative_or_silent_replies_are_not_confirmation(msg):
+@pytest.mark.parametrize("msg", ["confirm ABCDEF", "ABCDEF confirm", "Confirm: ABCDEF", "确认 ABCDEF", "确认ABCDEF",
+                                 "批准 abcdef"])
+def test_affirmative_with_code(msg):
+    assert is_explicit_confirmation(msg, ["ABCDEF"])
+
+
+NEGATIVE_REPLIES = [
+    # reviewer's reproductions (PR #1 review)
+    "I can't confirm that", "I won't approve this", "I refuse to authorize this", "我不批准", "拒绝批准", "没确认",
+    "我没说确认", "Do it later, I haven't decided",
+    # negations and refusals
+    "no", "No, don't confirm", "don't cancel", "do not approve", "I cannot confirm", "I wouldn't approve that",
+    "I haven't confirmed", "never confirm", "not confirmed", "I do not confirm", "reject", "denied", "nope",
+    "不要", "不确认", "先不确认", "不同意", "不执行", "别确认", "暂不批准", "取消", "我拒绝", "没有批准", "确认不了",
+    # questions
+    "confirm?", "Yes?", "确认？", "should I confirm", "can you confirm first?", "approve？",
+    # conditionals and hedges
+    "confirm if it's free", "if you think so, confirm", "confirm unless there's a fee", "maybe", "I guess so",
+    "probably yes", "whatever", "sure, whatever", "好像可以", "随便", "也许吧", "如果免费就确认", "要是没费用就确认",
+    "confirm later", "wait, confirm later", "not now", "sounds interesting",
+    # extra content / wrong target / not a confirmation
+    "Yes, cancel Hulu", "confirm cancelling Hulu and Netflix", "确认取消 Hulu", "go ahead", "do it", "proceed",
+    "ok", "OK!", "sure", "yes", "y", "👍", "I confirmed yesterday", "confirm confirm confirm but not this one",
+    "Yes, confirm the phone call", "Confirm both",
+    # empty / silence / non-text
+    "", "   ", None, 123,
+]
+
+
+@pytest.mark.parametrize("msg", NEGATIVE_REPLIES)
+def test_negative_vague_or_extra_replies_are_not_confirmation(msg):
     assert not is_explicit_confirmation(msg)
+    assert not is_explicit_confirmation(msg, ["ABCDEF"])
+
+
+@pytest.mark.parametrize("msg", ["confirm XYZXYZ", "confirm ABCDEF XYZXYZ", "confirm ABCDEFG", "don't confirm ABCDEF",
+                                 "ABCDEF?", "不确认 ABCDEF", "confirm ABCDEF if free"])
+def test_wrong_or_decorated_codes_fail(msg):
+    assert not is_explicit_confirmation(msg, ["ABCDEF"])
+
+
+@pytest.mark.parametrize("msg", ["I can't confirm that", "我不批准", "maybe", "confirm?", "yes"])
+def test_gate_rejects_negative_replies_and_stays_pending(gate, msg):
+    req = make(gate)
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm(req["id"], msg, shown_text_sha256=req["confirmation_sha256"])
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm(req["id"], f"{msg} {req['confirmation_code']}")
+    assert gate.get(req["id"])["status"] == "pending_user"
+    with pytest.raises(NotApprovedError):
+        gate.begin_execution(req["id"], "browser")
+
+
+# --- binding approval to the confirmation text shown -------------------------------------------------
+def test_request_stores_text_code_and_digest(gate):
+    req = make(gate)
+    assert len(req["confirmation_code"]) == 6 and req["confirmation_code"] in req["confirmation_text"]
+    assert req["confirmation_sha256"] == sha256_text(req["confirmation_text"])
+    assert "Cancel Hulu" in req["confirmation_text"] and "web browser" in req["confirmation_text"]
+
+
+def test_bare_confirm_needs_matching_text_digest(gate):
+    req = make(gate)
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm(req["id"], "confirm")
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm(req["id"], "confirm", shown_text_sha256=sha256_text("some other text"))
+    approved = gate.confirm(req["id"], "Confirm", shown_text_sha256=req["confirmation_sha256"], source="chat:msg-42")
+    assert approved["status"] == "approved" and approved["approval_source"] == "chat:msg-42"
+
+
+def test_code_of_another_request_does_not_approve(gate):
+    a, b = make(gate), make(gate, target_ref="sub_other")
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm(a["id"], f"confirm {b['confirmation_code']}")
+
+
+def test_amend_invalidates_old_code_and_digest(gate):
+    req = make(gate)
+    amended = gate.amend(req["id"], {"risk_notes": "Early termination fee $25"}, "fee discovered")
+    assert amended["confirmation_code"] != req["confirmation_code"]
+    assert "Early termination fee $25" in amended["confirmation_text"]
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm(req["id"], f"confirm {req['confirmation_code']}")
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm(req["id"], "confirm", shown_text_sha256=req["confirmation_sha256"])
+    assert ok(gate, amended)["status"] == "approved"
 
 
 # --- happy path ----------------------------------------------------------------------------------
 def test_full_lifecycle_pending_to_executed(gate, store):
     req = make(gate)
-    assert req["status"] == "pending_user"
-    req = gate.confirm(req["id"], "Yes, confirm cancelling Hulu")
-    assert req["status"] == "approved" and req["approved_by_message"] == "Yes, confirm cancelling Hulu"
+    assert req["status"] == "pending_user" and req["executor"] == "browser"
+    req = ok(gate, req)
+    assert req["status"] == "approved" and req["approved_by_message"].startswith("confirm ")
     run = gate.begin_execution(req["id"], "browser")
     run = gate.finish_execution(run["id"], "success", [evidence_id(store)])
     req = gate.get(req["id"])
@@ -46,15 +139,19 @@ def test_full_lifecycle_pending_to_executed(gate, store):
     assert run["outcome"] == "success" and run["finished_at"]
 
 
+def test_chinese_confirmation(gate):
+    assert ok(gate, make(gate), "确认")["status"] == "approved"
+
+
 def test_failed_run_marks_request_failed(gate):
-    req = gate.confirm(make(gate)["id"], "confirm")
+    req = ok(gate, make(gate))
     run = gate.begin_execution(req["id"], "browser")
     gate.finish_execution(run["id"], "failed", error_code="playbook_broken")
     assert gate.get(req["id"])["status"] == "failed"
 
 
 def test_needs_user_keeps_run_open_and_resumes(gate, store):
-    req = gate.confirm(make(gate)["id"], "confirm")
+    req = ok(gate, make(gate))
     run = gate.begin_execution(req["id"], "browser")
     gate.finish_execution(run["id"], "needs_user", error_code="login_required")
     assert gate.get(req["id"])["status"] == "approved"
@@ -90,23 +187,14 @@ def test_terminal_requests_cannot_execute_or_be_confirmed(gate, clock, terminal)
     with pytest.raises(NotApprovedError):
         gate.begin_execution(req["id"], "browser")
     with pytest.raises(InvalidTransitionError):
-        gate.confirm(req["id"], "confirm")
-
-
-def test_vague_reply_does_not_approve(gate):
-    req = make(gate)
-    with pytest.raises(NotExplicitConfirmationError):
-        gate.confirm(req["id"], "maybe")
-    assert gate.get(req["id"])["status"] == "pending_user"
-    with pytest.raises(NotApprovedError):
-        gate.begin_execution(req["id"], "browser")
+        ok(gate, req)
 
 
 def test_confirming_after_expiry_fails_and_marks_expired(gate, clock):
     req = make(gate)
     clock.advance(hours=72, seconds=1)
     with pytest.raises(InvalidTransitionError):
-        gate.confirm(req["id"], "confirm")
+        ok(gate, req)
     assert gate.get(req["id"])["status"] == "expired"
 
 
@@ -120,11 +208,13 @@ def test_default_expiry_is_72_hours(gate, clock):
 
 
 def test_executed_request_cannot_run_twice(gate, store):
-    req = gate.confirm(make(gate)["id"], "confirm")
+    req = ok(gate, make(gate))
     run = gate.begin_execution(req["id"], "browser")
     gate.finish_execution(run["id"], "success", [evidence_id(store)])
     with pytest.raises(NotApprovedError):
         gate.begin_execution(req["id"], "browser")
+    with pytest.raises(InvalidTransitionError):
+        gate.finish_execution(run["id"], "success", [evidence_id(store)])
 
 
 def test_purchase_is_disabled(gate):
@@ -132,26 +222,29 @@ def test_purchase_is_disabled(gate):
         make(gate, action_type="purchase", summary="Buy TV")
 
 
-def test_purchase_row_inserted_directly_still_cannot_execute(gate, store):
+def test_purchase_row_inserted_directly_still_cannot_execute(gate, store, clock):
     req = make(gate)
     store.update("action_requests", req["id"], {"action_type": "purchase", "status": "approved",
-                                                "approved_by_message": "confirm"})
+                                                "approved_by_message": "confirm",
+                                                "execute_by": "2099-01-01T00:00:00Z"})
     with pytest.raises(NotApprovedError):
         gate.begin_execution(req["id"], "browser")
 
 
 def test_approved_flag_without_user_message_is_not_enough(gate, store):
     req = make(gate)
-    store.update("action_requests", req["id"], {"status": "approved"})
+    store.update("action_requests", req["id"], {"status": "approved", "execute_by": "2099-01-01T00:00:00Z"})
     with pytest.raises(NotApprovedError):
         gate.begin_execution(req["id"], "browser")
 
 
-def test_success_requires_evidence(gate):
-    req = gate.confirm(make(gate)["id"], "confirm")
+def test_success_requires_real_evidence(gate):
+    req = ok(gate, make(gate))
     run = gate.begin_execution(req["id"], "browser")
     with pytest.raises(GateError):
         gate.finish_execution(run["id"], "success", [])
+    with pytest.raises(GateError):
+        gate.finish_execution(run["id"], "success", ["evd_madeup"])
 
 
 def test_guarded_executor_refuses_unapproved(gate):
@@ -177,17 +270,95 @@ def test_guarded_executor_crash_records_failed_run(gate):
         def perform(self, request, run):
             raise RuntimeError("page changed")
 
-    req = gate.confirm(make(gate)["id"], "confirm")
+    req = ok(gate, make(gate))
     run = Boom(gate).run(req["id"])
     assert run["outcome"] == "failed" and run["error_code"] == "RuntimeError"
     assert gate.get(req["id"])["status"] == "failed"
 
 
+# --- executor bound to action_type and to the approved channel (review non-blocking) -----------------
+def test_executor_must_match_the_approved_channel(gate):
+    req = ok(gate, make(gate))  # approved for browser
+    for other in ("email", "bland_call", "manual"):
+        with pytest.raises(NotApprovedError):
+            gate.begin_execution(req["id"], other)
+    assert gate.begin_execution(req["id"], "browser")
+
+
+@pytest.mark.parametrize("atype,bad", [("place_call", "browser"), ("send_email", "bland_call"),
+                                       ("negotiate_bill", "email"), ("rebook_travel", "bland_call"),
+                                       ("submit_form_with_pii", "email")])
+def test_executor_not_allowed_for_action_type(gate, atype, bad):
+    with pytest.raises(GateError):
+        make(gate, action_type=atype, executor=bad, draft_content=DRAFT,
+             disclosed_fields=[{"field": "name", "value_masked": "Alex"}])
+
+
+def test_default_executor_per_type(gate):
+    for atype, allowed in ALLOWED_EXECUTORS.items():
+        req = make(gate, action_type=atype, draft_content=DRAFT, target_ref=f"t_{atype}",
+                   disclosed_fields=[{"field": "name", "value_masked": "Alex"}])
+        assert req["executor"] == allowed[0]
+
+
+def test_switching_channel_requires_reconfirmation(gate):
+    req = ok(gate, make(gate))
+    amended = gate.amend(req["id"], {"executor": "bland_call", "draft_content": DRAFT}, "web cancel failed")
+    assert amended["status"] == "pending_user"
+    with pytest.raises(NotApprovedError):
+        gate.begin_execution(req["id"], "bland_call")
+    ok(gate, amended)
+    assert gate.begin_execution(req["id"], "bland_call")
+
+
+# --- approvals expire (review non-blocking) ---------------------------------------------------------
+def test_approval_expires_after_default_ttl(gate, clock):
+    req = ok(gate, make(gate))
+    clock.advance(hours=24, seconds=1)
+    with pytest.raises(NotApprovedError):
+        gate.begin_execution(req["id"], "browser")
+    assert gate.get(req["id"])["status"] == "expired"
+
+
+def test_approval_ttl_is_configurable(store, clock):
+    store.update_user({"approved_pii_fields": [], "thresholds": {"approval_ttl_hours": 2}})
+    g = ActionGate(store, now_fn=clock)
+    req = ok(g, make(g))
+    clock.advance(hours=1)
+    assert g.begin_execution(req["id"], "browser")
+    req2 = ok(g, make(g, target_ref="sub_2"))
+    clock.advance(hours=2, seconds=1)
+    with pytest.raises(NotApprovedError):
+        g.begin_execution(req2["id"], "browser")
+    g3 = ActionGate(store, now_fn=clock, approval_ttl=timedelta(minutes=5))
+    assert g3.approval_ttl == timedelta(minutes=5)
+
+
+def test_expire_due_also_expires_stale_approvals(gate, clock):
+    req = ok(gate, make(gate))
+    clock.advance(hours=25)
+    assert gate.expire_due() == [req["id"]]
+
+
+def test_started_run_can_finish_after_deadline(gate, clock, store):
+    req = ok(gate, make(gate))
+    run = gate.begin_execution(req["id"], "browser")
+    clock.advance(hours=30)
+    gate.finish_execution(run["id"], "success", [evidence_id(store)])
+    assert gate.get(req["id"])["status"] == "executed"
+
+
+def test_ttl_counts_from_end_of_revoke_window(gate, clock):
+    req = make(gate, execute_not_before=clock.now + timedelta(hours=10))
+    ok(gate, req)
+    clock.advance(hours=30)
+    assert gate.begin_execution(req["id"], "browser")
+
+
 # --- pre-authorization revoke window (FR-1-9, Q4) --------------------------------------------------
 def test_preauthorized_request_waits_for_revoke_window(gate, clock):
-    from datetime import timedelta
     req = make(gate, execute_not_before=clock.now + timedelta(hours=2))
-    gate.confirm(req["id"], "Confirm: auto-cancel Peacock trial before it ends")
+    ok(gate, req)
     with pytest.raises(NotApprovedError):
         gate.begin_execution(req["id"], "browser")
     clock.advance(hours=2)
@@ -195,9 +366,8 @@ def test_preauthorized_request_waits_for_revoke_window(gate, clock):
 
 
 def test_user_can_revoke_inside_window(gate, clock):
-    from datetime import timedelta
     req = make(gate, execute_not_before=clock.now + timedelta(hours=2))
-    gate.confirm(req["id"], "confirm")
+    ok(gate, req)
     gate.cancel_by_user(req["id"], "user replied stop")
     clock.advance(hours=3)
     with pytest.raises(NotApprovedError):
@@ -205,7 +375,7 @@ def test_user_can_revoke_inside_window(gate, clock):
 
 
 def test_cannot_revoke_after_execution_started(gate):
-    req = gate.confirm(make(gate)["id"], "confirm")
+    req = ok(gate, make(gate))
     gate.begin_execution(req["id"], "browser")
     with pytest.raises(InvalidTransitionError):
         gate.cancel_by_user(req["id"])
@@ -213,37 +383,102 @@ def test_cannot_revoke_after_execution_started(gate):
 
 # --- material change requires re-confirmation (8.2) -------------------------------------------------
 def test_amend_after_approval_requires_reconfirmation(gate):
-    req = gate.confirm(make(gate)["id"], "confirm")
-    req = gate.amend(req["id"], {"plan_steps": ["Call Hulu support"], "risk_notes": "switching to phone"},
-                     "web cancel failed; phone needed")
-    assert req["status"] == "pending_user" and req["approved_by_message"] is None
+    req = ok(gate, make(gate))
+    req = gate.amend(req["id"], {"plan_steps": ["Open account page again", "Cancel"], "risk_notes": "retry"},
+                     "page changed")
+    assert req["status"] == "pending_user" and req["approved_by_message"] is None and req["execute_by"] is None
     with pytest.raises(NotApprovedError):
-        gate.begin_execution(req["id"], "bland_call")
-    gate.confirm(req["id"], "yes, confirm the phone call")
-    assert gate.begin_execution(req["id"], "bland_call")
+        gate.begin_execution(req["id"], "browser")
+    ok(gate, req)
+    assert gate.begin_execution(req["id"], "browser")
 
 
 def test_amend_rejects_status_changes(gate):
     req = make(gate)
     with pytest.raises(GateError):
         gate.amend(req["id"], {"status": "approved"}, "sneaky")
+    with pytest.raises(GateError):
+        gate.amend(req["id"], {"action_type": "purchase"}, "sneaky")
+
+
+# --- amend runs the same validation as create (review blocking 2) ----------------------------------
+AMEND_BAD = [
+    ({"disclosed_fields": [{"field": "ssn", "value_masked": "123-45-6789"}]}, (GateError, ForbiddenDataError)),
+    ({"disclosed_fields": [{"field": "date_of_birth", "value_masked": "**/**/1990"}]}, GateError),
+    ({"disclosed_fields": [{"field": "account_last4", "value_masked": "4111 1111 1111 1111"}]}, ForbiddenDataError),
+    ({"plan_steps": []}, GateError),
+    ({"plan_steps": ["  "]}, GateError),
+    ({"summary": ""}, GateError),
+    ({"risk_notes": "SSN 123-45-6789"}, ForbiddenDataError),
+    ({"plan_steps": ["type password: hunter2"]}, ForbiddenDataError),
+    ({"constraints": {"card": "4111 1111 1111 1111"}}, ForbiddenDataError),
+    ({"constraints": "not a dict"}, GateError),
+    ({"expected_saving_cents": "lots"}, GateError),
+    ({"executor": "teleport"}, GateError),
+]
+
+
+@pytest.mark.parametrize("changes,err", AMEND_BAD)
+@pytest.mark.parametrize("approved_first", [False, True])
+def test_amend_validates_like_create(gate, changes, err, approved_first):
+    req = make(gate)
+    if approved_first:
+        req = ok(gate, req)
+    before = gate.get(req["id"])
+    with pytest.raises(err):
+        gate.amend(req["id"], changes, "bad change")
+    after = gate.get(req["id"])
+    assert after["status"] == before["status"] and after["confirmation_code"] == before["confirmation_code"]
+
+
+@pytest.mark.parametrize("atype", ["send_email", "place_call", "negotiate_bill"])
+def test_amend_cannot_remove_required_draft(gate, atype):
+    req = make(gate, action_type=atype, draft_content=DRAFT)
+    for empty in ("", "   ", None):
+        with pytest.raises(GateError):
+            gate.amend(req["id"], {"draft_content": empty}, "drop draft")
+    assert gate.get(req["id"])["draft_content"] == DRAFT
+
+
+def test_amend_cannot_switch_to_email_without_draft(gate):
+    req = make(gate)
+    with pytest.raises(GateError):
+        gate.amend(req["id"], {"executor": "email"}, "email only merchant")
 
 
 # --- batch -------------------------------------------------------------------------------------
 def test_batch_confirm_all_or_nothing(gate):
     a, b, c = (make(gate, target_ref=f"sub_{i}") for i in range(3))
     gate.reject(c["id"])
+    codes = " ".join(r["confirmation_code"] for r in (a, b, c))
     with pytest.raises(InvalidTransitionError):
-        gate.confirm_batch([a["id"], b["id"], c["id"]], "Confirm all three")
+        gate.confirm_batch([a["id"], b["id"], c["id"]], f"confirm {codes}")
     assert gate.get(a["id"])["status"] == "pending_user"
-    approved = gate.confirm_batch([a["id"], b["id"]], "Confirm both")
+    approved = gate.confirm_batch([a["id"], b["id"]], f"confirm {a['confirmation_code']} {b['confirmation_code']}")
     assert all(r["status"] == "approved" and "batch[" in r["approved_by_message"] for r in approved)
 
 
-def test_batch_rejects_vague_reply(gate):
+def test_batch_with_batch_text_digest(gate):
+    a, b = make(gate, target_ref="s1"), make(gate, target_ref="s2")
+    text = gate.batch_text([a["id"], b["id"]])
+    assert a["confirmation_code"] in text and "1. [" in text and "2. [" in text
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm_batch([a["id"], b["id"]], "confirm all")
+    approved = gate.confirm_batch([a["id"], b["id"]], "Confirm all", shown_text_sha256=sha256_text(text))
+    assert len(approved) == 2
+
+
+def test_batch_needs_every_code(gate):
+    a, b = make(gate, target_ref="s1"), make(gate, target_ref="s2")
+    with pytest.raises(NotExplicitConfirmationError):
+        gate.confirm_batch([a["id"], b["id"]], f"confirm {a['confirmation_code']}")
+
+
+@pytest.mark.parametrize("msg", ["sure, whatever", "confirm all?", "I can't confirm these", "全部不批准"])
+def test_batch_rejects_non_affirmative(gate, msg):
     a = make(gate)
     with pytest.raises(NotExplicitConfirmationError):
-        gate.confirm_batch([a["id"]], "sure, whatever")
+        gate.confirm_batch([a["id"]], msg, shown_text_sha256=sha256_text(gate.batch_text([a["id"]])))
 
 
 # --- creation validation -------------------------------------------------------------------------
@@ -252,10 +487,10 @@ def test_disclosed_fields_must_be_preapproved(gate):
         make(gate, disclosed_fields=[{"field": "date_of_birth", "value_masked": "**/**/1990"}])
     req = make(gate, disclosed_fields=[{"field": "account_last4", "value_masked": "****4821"}])
     assert req["disclosed_fields"][0]["field"] == "account_last4"
+    assert "account_last4=****4821" in req["confirmation_text"]
 
 
 def test_disclosed_value_cannot_contain_full_card(gate):
-    from core.privacy import ForbiddenDataError
     with pytest.raises(ForbiddenDataError):
         make(gate, disclosed_fields=[{"field": "account_last4", "value_masked": "4111 1111 1111 1111"}])
 
@@ -264,7 +499,13 @@ def test_disclosed_value_cannot_contain_full_card(gate):
 def test_email_and_calls_need_a_draft(gate, atype):
     with pytest.raises(GateError):
         make(gate, action_type=atype)
-    assert make(gate, action_type=atype, draft_content="Hello, I am an AI assistant calling on behalf of Alex.")
+    req = make(gate, action_type=atype, draft_content=DRAFT)
+    assert DRAFT in req["confirmation_text"]  # the user sees the exact text
+
+
+def test_cancel_via_email_needs_a_draft(gate):
+    with pytest.raises(GateError):
+        make(gate, executor="email")
 
 
 def test_plan_steps_required(gate):
@@ -273,7 +514,7 @@ def test_plan_steps_required(gate):
 
 
 def test_timeline_lists_requests_with_runs(gate, store):
-    r1 = gate.confirm(make(gate)["id"], "confirm")
+    r1 = ok(gate, make(gate))
     run = gate.begin_execution(r1["id"], "browser")
     gate.finish_execution(run["id"], "success", [evidence_id(store)])
     make(gate, target_ref="sub_other")

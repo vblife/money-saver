@@ -33,3 +33,17 @@ def test_month_headline_counts_only_verified():
     text = notifier.format_month_headline(s, "October")
     assert text.startswith("In October you saved $142.37 (verified)")
     assert "Travel credit (not counted): $48.00" in text
+
+
+def test_card_shows_code_channel_and_exact_draft():
+    req = {**REQ, "action_type": "send_email", "executor": "email", "confirmation_code": "QWERTY",
+           "draft_content": "To: support@example.com\nPlease cancel my plan."}
+    text = notifier.format_action_request(req)
+    assert "How: email" in text and "  | Please cancel my plan." in text
+    assert text.endswith("To approve, reply exactly: confirm QWERTY")
+    assert "确认 QWERTY" in notifier.format_action_request(req, "zh")
+
+
+def test_batch_lists_codes():
+    text = notifier.format_batch([{**REQ, "confirmation_code": "AAAAAA"}, {**REQ, "id": "ar_2", "confirmation_code": "BBBBBB"}])
+    assert "confirm AAAAAA BBBBBB" in text

@@ -39,7 +39,7 @@ def test_enum_constraints(store):
     with pytest.raises(sqlite3.IntegrityError):
         store.insert("subscriptions", {"display_name": "X", "period": "fortnightly"})
     with pytest.raises(sqlite3.IntegrityError):
-        store.insert("action_requests", {"action_type": "wire_money", "target_ref": "x", "summary": "x", "expires_at": "2026-01-01T00:00:00Z"})
+        store.insert("action_requests", {"action_type": "wire_money", "executor": "browser", "target_ref": "x", "summary": "x", "expires_at": "2026-01-01T00:00:00Z"})
 
 
 def test_refuses_full_card_numbers_and_ssn(store):
@@ -109,7 +109,7 @@ JSON_CASES = [
 def test_json_columns_reject_forbidden_data(store, table, column, value):
     assert column in _TABLES[table][1]
     row = {
-        "action_requests": {"action_type": "cancel_subscription", "target_ref": "s", "summary": "x", "expires_at": "2099-01-01T00:00:00Z"},
+        "action_requests": {"action_type": "cancel_subscription", "target_ref": "s", "summary": "x", "executor": "browser", "expires_at": "2099-01-01T00:00:00Z"},
         "action_runs": {"action_request_id": "ar_x", "started_at": "2026-01-01T00:00:00Z", "executor": "browser"},
         "source_messages": {"gmail_account": "a@example.com", "message_id": "m", "category": "other", "confidence": 1},
         "bookings": {"kind": "flight"},
@@ -132,7 +132,7 @@ def test_every_json_column_is_scanned(store):
 
 
 def test_json_columns_allow_masked_values(store):
-    row = store.insert("action_requests", {"action_type": "cancel_subscription", "target_ref": "s", "summary": "x",
+    row = store.insert("action_requests", {"action_type": "cancel_subscription", "target_ref": "s", "summary": "x", "executor": "browser",
                                            "expires_at": "2099-01-01T00:00:00Z",
                                            "disclosed_fields": [{"field": "account_last4", "value_masked": "****4821"}],
                                            "constraints": {"max_monthly_cents": 5500, "no_contract": True}})

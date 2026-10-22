@@ -16,7 +16,7 @@ from .util import default_db_path, new_id, to_iso, utcnow
 
 SCHEMA_VERSION = 1
 # Generated identifiers and digests: random hex can look like a card number, so they are not scanned.
-UNSCANNED_COLUMNS = {"id", "sha256", "confirmation_sha256"}
+UNSCANNED_COLUMNS = {"id", "sha256", "confirmation_sha256", "confirmation_code"}
 
 # table -> (id prefix, JSON columns)
 TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -149,8 +149,10 @@ CREATE TABLE IF NOT EXISTS action_requests (
   disclosed_fields TEXT NOT NULL DEFAULT '[]', constraints TEXT NOT NULL DEFAULT '{}', draft_content TEXT,
   expected_saving_cents INTEGER, risk_notes TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'pending_user' CHECK (status IN ('pending_user','approved','rejected','expired','executed','failed','cancelled_by_user')),
-  approved_at TEXT, approved_by_message TEXT, expires_at TEXT NOT NULL,
-  execute_not_before TEXT, history TEXT NOT NULL DEFAULT '[]',
+  executor TEXT NOT NULL CHECK (executor IN ('browser','bland_call','email','manual')),
+  confirmation_code TEXT, confirmation_text TEXT, confirmation_sha256 TEXT,
+  approved_at TEXT, approved_by_message TEXT, approval_source TEXT, expires_at TEXT NOT NULL,
+  execute_not_before TEXT, execute_by TEXT, history TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS action_runs (

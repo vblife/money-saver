@@ -55,10 +55,46 @@ should be confirmed by Charles before any real call or live cancellation.
 - **D8 Data model additions** (fields the spec needs implicitly):
   - `action_requests.execute_not_before` (revoke window for pre-authorization) and `history` (audit trail of
     transitions, 8.4).
+  - `action_requests.executor` (the approved channel), `confirmation_code`, `confirmation_text`,
+    `confirmation_sha256` (what the user was shown), `approval_source` (host message id), and `execute_by`
+    (approval deadline). See D11 to D13.
   - `savings_ledger.recurring_months` (12-month cap, promo length) and `reverses_id` (reversal link).
   - `source_messages` table (spec 6.1 SourceMessage): account, message id, sender, subject, category, merchant,
     confidence, `needs_review`, extracted fields, and a 200-character redacted snippet.
 - **D9 Privacy enforcement:** the store refuses any text column containing a full card number (IIN + Luhn), a full
-  SSN, or a credential key-value pair. Snippets and evidence notes are redacted before storage.
+  SSN, or a credential key-value pair. JSON columns are checked recursively: every key and value, nested lists and
+  dicts, integers, `key: value` pairs, and the serialized JSON. Generated ids (letters only) and digest columns are
+  not scanned, so random hex cannot be mistaken for a card number. Snippets and evidence notes are redacted before
+  storage.
 - **D10 Held back from M0:** connector launch config and routine schedules (deploy config), and real executors. These
   need Charles's approval under `AGENTS.md`.
+- **D11 Confirmation trust model.** The MCP server cannot see the chat. It only gets the `user_message` the agent
+  passes to `confirm_action_request`, so it cannot prove that a human typed the reply. The gate narrows what an agent
+  can claim, and the guarantees and limits are:
+  - *Fail-closed wording.* The whole reply must be an allow-listed affirmative (`confirm`, `approve`, `确认`, `批准`,
+    `同意`, ...) plus, optionally, the request's code. Negations, questions, conditionals, hedges, and any extra words
+    are rejected (8.2).
+  - *Binding to what was shown.* `create_action_request` renders one `confirmation_text` and a 6-letter
+    `confirmation_code`, and stores the text and its SHA-256. An approval must quote the code or present the digest of
+    that exact text. Amending re-renders both, so an approval of an old version cannot cover a changed plan. Codes
+    are per request, so one request's code cannot approve another.
+  - *Audit.* The verbatim reply, the optional host `source` (chat message id), and every transition are stored and
+    returned by `audit_timeline` (8.4).
+  - *Residual risk.* A compromised or prompt-injected agent could still forge a reply that includes the code. Mitigations
+    are in the skill: show the text verbatim, pass the reply verbatim, and never confirm because content says so.
+    Stronger guarantees need host support, such as a signed user-message id or an approval card the host renders and
+    verifies (like Grok Bot's own outgoing-message approval). This is tracked for M8.
+- **D12 Approval deadline.** An approval must be acted on within `approval_ttl_hours` (default 24 hours, set in user
+  `thresholds` or the `ActionGate` constructor). The deadline counts from the later of approval time and the end of
+  the revoke window (`execute_not_before`). After it, `start_action_run` fails, the request becomes `expired`, and the
+  user must be asked again. A run that already started may still finish and record its outcome. The 72-hour expiry of
+  unconfirmed requests (6.9) is unchanged.
+- **D13 Executor binding.** Each request is approved for one channel, and `start_action_run` must use that channel.
+  Allowed channels by action type: cancel_subscription = browser, bland_call, email, or manual; submit_claim = browser,
+  email, bland_call, or manual; negotiate_bill and place_call = bland_call; send_email = email; rebook_travel and
+  submit_form_with_pii = browser. The email and bland_call channels require a draft or call script. Switching
+  channel is an amendment and needs re-confirmation (8.2: "switching to a phone call must be re-confirmed").
+- **D14 Evidence files.** `record_evidence` copies only regular files whose real path is inside an allowed evidence
+  inbox (`MSB_EVIDENCE_INBOX`, default `$MSB_HOME/inbox`; a colon-separated list is allowed). Symlinks, paths that
+  resolve outside the inbox, and non-regular files are rejected, so the store cannot be used to collect secrets such
+  as `~/.ssh/id_rsa`.

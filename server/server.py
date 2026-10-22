@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from core import gmail_scanner, notifier  # noqa: E402
-from core.action_gate import ACTION_TYPES, EXECUTORS, RUN_OUTCOMES, ActionGate, GateError  # noqa: E402
+from core.action_gate import ACTION_TYPES, EXECUTORS, RUN_OUTCOMES, ActionGate, GateError, sha256_text  # noqa: E402
 from core.classifier import CATEGORIES, Classifier  # noqa: E402
 from core.evidence import KINDS as EVIDENCE_KINDS, EvidenceStore  # noqa: E402
 from core.ledger import MODULES, Ledger, LedgerError  # noqa: E402
@@ -67,21 +67,26 @@ TOOLS = [
      "description": "Normalize a merchant name, sender address, or text to a merchant_registry id. Entries marked unverified need an extra warning before any action (Q11).",
      "inputSchema": O({"name": S, "from_addr": S, "text": S}), "annotations": RO},
     {"name": "create_action_request", "title": "Create action request",
-     "description": "REQUIRED before any consequential action (cancel, call, claim, email, rebook, form with personal data, accepting terms). Lists exact steps, disclosed fields (must be in approved_pii_fields), risks, and the draft/script. 'purchase' is disabled. Show the returned confirmation_text to the user and wait for an explicit reply.",
+     "description": "REQUIRED before any consequential action (cancel, call, claim, email, rebook, form with personal data, accepting terms). Lists exact steps, the executor channel, disclosed fields (must be in approved_pii_fields), risks, and the draft/script. 'purchase' is disabled. Show the returned confirmation_text to the user verbatim; it contains a confirmation code the user replies with.",
      "inputSchema": O({"action_type": {"type": "string", "enum": list(ACTION_TYPES)}, "target_ref": S, "summary": S,
                        "plan_steps": ARR_S, "disclosed_fields": {"type": "array", "items": DISCLOSED},
                        "constraints": {"type": "object"}, "draft_content": S, "expected_saving_cents": I,
-                       "risk_notes": S, "expires_at": S, "execute_not_before": S, "lang": {"type": "string", "enum": ["en", "zh"]}},
+                       "risk_notes": S, "expires_at": S, "execute_not_before": S,
+                       "executor": {"type": "string", "enum": list(EXECUTORS), "description": "Channel the action will use; must be allowed for the action_type. Changing it later needs re-confirmation."},
+                       "lang": {"type": "string", "enum": ["en", "zh"]}},
                       ["action_type", "target_ref", "summary", "plan_steps"])},
     {"name": "list_action_requests", "title": "List action requests",
      "description": "Action requests, optionally filtered by status.",
      "inputSchema": O({"status": S}), "annotations": RO},
     {"name": "confirm_action_request", "title": "Confirm action request",
-     "description": "Record the user's explicit approval of ONE specific request. Pass the user's verbatim reply. Vague replies, questions, negations, or silence are rejected. Never call this on the user's behalf without their reply.",
-     "inputSchema": O({"request_id": S, "user_message": S}, ["request_id", "user_message"])},
+     "description": "Record the user's explicit approval of ONE specific request. Pass the user's verbatim reply; it must be exactly an affirmative such as 'confirm <code>' / '确认 <code>' (no other words). A bare 'confirm' also needs shown_text_sha256 of the exact confirmation_text the user saw. Never call this without a real user reply.",
+     "inputSchema": O({"request_id": S, "user_message": S, "shown_text_sha256": S,
+                       "source": {"type": "string", "description": "Chat message id or channel of the user's reply, when the host provides one"}},
+                      ["request_id", "user_message"])},
     {"name": "confirm_action_requests_batch", "title": "Confirm a listed batch",
      "description": "Approve a batch the user saw listed item by item (use format from create/list). All-or-nothing.",
-     "inputSchema": O({"request_ids": ARR_S, "user_message": S}, ["request_ids", "user_message"])},
+     "inputSchema": O({"request_ids": ARR_S, "user_message": S, "shown_text_sha256": S, "source": S,
+                       "lang": {"type": "string", "enum": ["en", "zh"]}}, ["request_ids", "user_message"])},
     {"name": "reject_action_request", "title": "Reject action request", "description": "User declined.",
      "inputSchema": O({"request_id": S, "note": S}, ["request_id"])},
     {"name": "revoke_action_request", "title": "Revoke action request",
@@ -168,27 +173,32 @@ class App:
             return {"match": hit, "merchant": self.resolver.get(hit["merchant_id"]) if hit else None}
         if name == "create_action_request":
             from core.util import parse_iso
-            lang = a.pop("lang", "en")
             for k in ("expires_at", "execute_not_before"):
                 if a.get(k):
                     a[k] = parse_iso(a[k])
             req = gate.create(**a)
-            return {"request": req, "confirmation_text": notifier.format_action_request(req, lang)}
+            return {"request": req, "confirmation_text": req["confirmation_text"],
+                    "confirmation_code": req["confirmation_code"], "confirmation_sha256": req["confirmation_sha256"]}
         if name == "list_action_requests":
             where = {"status": a["status"]} if a.get("status") else {}
             reqs = st.find("action_requests", where, order_by="created_at DESC")
-            return {"requests": reqs, "batch_text": notifier.format_batch([r for r in reqs if r["status"] == "pending_user"])}
+            pending = [r for r in reqs if r["status"] == "pending_user"]
+            text = notifier.format_batch(pending)
+            return {"requests": reqs, "batch_text": text, "batch_request_ids": [r["id"] for r in pending],
+                    "batch_sha256": sha256_text(text)}
         if name == "confirm_action_request":
-            return {"request": gate.confirm(a["request_id"], a["user_message"])}
+            return {"request": gate.confirm(a["request_id"], a["user_message"], a.get("shown_text_sha256"), a.get("source"))}
         if name == "confirm_action_requests_batch":
-            return {"requests": gate.confirm_batch(a["request_ids"], a["user_message"])}
+            return {"requests": gate.confirm_batch(a["request_ids"], a["user_message"], a.get("shown_text_sha256"),
+                                                   a.get("source"), a.get("lang", "en"))}
         if name == "reject_action_request":
             return {"request": gate.reject(a["request_id"], a.get("note") or "rejected by user")}
         if name == "revoke_action_request":
             return {"request": gate.cancel_by_user(a["request_id"], a.get("note") or "revoked by user")}
         if name == "amend_action_request":
             req = gate.amend(a["request_id"], a["changes"], a["reason"])
-            return {"request": req, "confirmation_text": notifier.format_action_request(req)}
+            return {"request": req, "confirmation_text": req["confirmation_text"],
+                    "confirmation_code": req["confirmation_code"], "confirmation_sha256": req["confirmation_sha256"]}
         if name == "start_action_run":
             return {"run": gate.begin_execution(a["request_id"], a["executor"])}
         if name == "finish_action_run":
