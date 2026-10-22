@@ -48,8 +48,8 @@ Charles approved enabling R1, R3, R4, and R10 by default on 2026-10-22 (M1b, D31
 3. **M1c Card statement upload:** PDF (`pdftotext`) and CSV parsing, keep only likely recurring lines, delete the
    original by default (FR-0-8, PV-3).
 4. **M1d Cancellation execution:** browser playbooks for the top 30 merchants (FR-1-10), Bland cancel call script under the
-   Q3 honesty policy (FR-1-11; Q3 resolved 2026-10-22, D30: no proactive AI disclosure, truthful if asked, never
-   claims to be human), email-cancel drafts handed to the user's approval flow (FR-1-12), evidence and 48-hour
+   Q3 honesty policy (FR-1-11; Q3 resolved 2026-10-22, D30: disclose up front that the caller is an AI (locked on),
+   truthful if asked, never claims to be human; post-call transcript audits for these rules), email-cancel drafts handed to the user's approval flow (FR-1-12), evidence and 48-hour
    confirmation watch -> `cancel_unconfirmed` (FR-1-13), manual fallback guide (FR-1-14), post-charge check
    (FR-1-15), ledger entries per the 5.1 savings rules. All executors subclass `GuardedExecutor`; tests use fakes.
 

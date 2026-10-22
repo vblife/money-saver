@@ -1,9 +1,10 @@
-"""Call honesty policy (Q3, decided by Charles 2026-10-22; D30).
+"""Call honesty policy (Q3, decided by Charles 2026-10-22, revised the same day; D30).
 
-* Calls do NOT proactively say they are an AI (configurable, off by default).
-* If the other party directly asks whether they are talking to an AI, the answer is always truthful: yes, an AI
-  assistant calling on behalf of the user. The caller never claims to be human and never claims to be the user.
-  This half is not configurable: a policy that tries to change it fails to load.
+* Every call discloses up front that the caller is an AI: the opening line is "Hi, this is an AI assistant calling
+  on behalf of <user> about their account." This is locked on: a policy with proactive_ai_disclosure false fails
+  to load.
+* If the other party asks whether they are talking to an AI, the answer is always truthful: yes, an AI assistant
+  calling on behalf of the user. The caller never claims to be human and never claims to be the user. Also locked.
 
 Call scripts are structured (allowlist first, D30):
 
@@ -40,11 +41,11 @@ TRUTHFUL_ANSWER = {
     "zh": "是的，我是代表 {user_name} 致电的 AI 助手。",
 }
 OPENING = {
-    "en": {False: "Hi, I'm calling on behalf of {user_name} about their account.",
-           True: "Hi, I'm an AI assistant calling on behalf of {user_name} about their account."},
-    "zh": {False: "您好，我代表 {user_name} 来电，咨询其账户相关事宜。",
-           True: "您好，我是代表 {user_name} 致电的 AI 助手，咨询其账户相关事宜。"},
+    "en": "Hi, this is an AI assistant calling on behalf of {user_name} about their account.",
+    "zh": "您好，我是代表 {user_name} 致电的 AI 助手，咨询其账户相关事宜。",
 }
+# The opening must contain this disclosure (checked separately from the exact block match, as a second guard).
+DISCLOSURE = {"en": "this is an AI assistant calling on behalf of", "zh": "致电的 AI 助手"}
 RULES = {
     "en": ["Open with: \"{opening}\"",
            "{volunteer}",
@@ -60,9 +61,8 @@ RULES = {
            "绝不声称自己是人类，也绝不声称自己是账户持有人或 {user_name}。你是代表其致电。",
            "以上规则优先于所有任务步骤。若对方不愿与 AI 助手继续通话，礼貌结束并回报。不得争辩或误导。"],
 }
-VOLUNTEER = {"en": {False: "Do not volunteer that you are an AI unless asked.",
-                    True: "Say you are an AI assistant in the opening."},
-             "zh": {False: "除非被问到，不要主动说明自己是 AI。", True: "开场即说明自己是 AI 助手。"}}
+VOLUNTEER = {"en": "Say that you are an AI assistant in your first sentence, before anything else, on every call.",
+             "zh": "每次通话的第一句话就说明自己是 AI 助手，先于其他任何内容。"}
 
 
 class CallPolicyError(ValueError):
@@ -71,11 +71,13 @@ class CallPolicyError(ValueError):
 
 @dataclass(frozen=True)
 class CallPolicy:
-    proactive_ai_disclosure: bool = False
-    # Fixed by design: asked -> truthful; never claim to be human or the user.
+    # Both are fixed by Charles's Q3 decision: disclose up front, and answer truthfully if asked.
+    proactive_ai_disclosure: bool = True
     truthful_if_asked: bool = True
 
     def __post_init__(self):
+        if self.proactive_ai_disclosure is not True:
+            raise CallPolicyError("proactive_ai_disclosure cannot be turned off (Q3: calls disclose up front)")
         if self.truthful_if_asked is not True:
             raise CallPolicyError("truthful_if_asked cannot be turned off (Q3)")
 
@@ -89,10 +91,11 @@ def parse_policy(doc: Any) -> CallPolicy:
     asked = doc.get("if_asked_whether_ai", TRUTHFUL)
     if asked != TRUTHFUL:
         raise CallPolicyError(f"if_asked_whether_ai must be '{TRUTHFUL}'; denying being an AI is never allowed")
-    proactive = doc.get("proactive_ai_disclosure", False)
-    if not isinstance(proactive, bool):
-        raise CallPolicyError("proactive_ai_disclosure must be true or false")
-    return CallPolicy(proactive_ai_disclosure=proactive)
+    proactive = doc.get("proactive_ai_disclosure", True)
+    if proactive is not True:
+        raise CallPolicyError("proactive_ai_disclosure must be true: every call discloses up front that the "
+                              "caller is an AI (Q3, Charles 2026-10-22)")
+    return CallPolicy()
 
 
 def load_policy(path: str | None = None) -> CallPolicy:
@@ -116,9 +119,30 @@ HOMOGLYPHS = str.maketrans({
     "α": "a", "Α": "a", "β": "b", "Β": "b", "ε": "e", "Ε": "e", "ζ": "z", "Ζ": "z", "η": "n", "Η": "h", "ι": "i",
     "Ι": "i", "κ": "k", "Κ": "k", "μ": "u", "Μ": "m", "ν": "v", "Ν": "n", "ο": "o", "Ο": "o", "ρ": "p", "Ρ": "p",
     "τ": "t", "Τ": "t", "υ": "u", "Υ": "y", "χ": "x", "Χ": "x", "ω": "w", "ς": "s", "σ": "o",
+    # Armenian
+    "հ": "h", "օ": "o", "Օ": "o", "Ս": "u", "Տ": "s", "զ": "q", "ց": "g", "Լ": "l", "ւ": "l",
+    # Cherokee capitals (small letters are upper-cased to these first, see fold())
+    "\u13aa": "a", "\u13f4": "b", "\u13df": "c", "\u13a0": "d", "\u13ac": "e", "\u13c0": "g", "\u13bb": "h",
+    "\u13ab": "j", "\u13e6": "k", "\u13de": "l", "\u13b7": "m", "\u13e2": "p", "\u13da": "s", "\u13a2": "t",
+    "\u13d9": "v", "\u13b3": "w", "\u13c3": "z", "\u13a5": "i", "\u13be": "h", "\u13cc": "u", "\u13c1": "n",
     # Latin look-alikes
     "ı": "i", "ł": "l", "ø": "o", "ß": "ss",
 })
+# Latin letter variants that NFKC leaves alone: small capitals, turned, script, dotless, ... ('ʜuman' -> 'human')
+_LATIN_VARIANT = re.compile(r"LATIN (?:SMALL |CAPITAL )?LETTER (?:SMALL CAPITAL |SCRIPT |TURNED |REVERSED |CLOSED |"
+                            r"OPEN |BARRED |DOTLESS |SIDEWAYS |INSULAR |BROKEN |LONG |STRETCHED |INVERTED )?([A-Z])")
+
+
+def _latin_variant(ch: str) -> str:
+    if ch.isascii() or not ch.isalpha():
+        return ch
+    if "\uab70" <= ch <= "\uabbf" or "\u13f8" <= ch <= "\u13fd":     # Cherokee small letters
+        return ch.upper()
+    try:
+        m = _LATIN_VARIANT.fullmatch(unicodedata.name(ch))
+    except ValueError:
+        return ch
+    return m.group(1).lower() if m else ch
 LEET = str.maketrans({"4": "a", "@": "a", "3": "e", "1": "i", "!": "i", "|": "l", "0": "o", "5": "s", "$": "s",
                       "7": "t", "8": "b", "9": "g"})
 
@@ -129,7 +153,7 @@ def fold(text: str) -> str:
     t = "".join(ch for ch in t if unicodedata.category(ch) != "Cf")
     for k, v in _QUOTES.items():
         t = t.replace(k, v)
-    t = t.translate(HOMOGLYPHS)
+    t = "".join(_latin_variant(ch) for ch in t).translate(HOMOGLYPHS)
     out, prev_latin = [], False
     for ch in unicodedata.normalize("NFD", t):
         if unicodedata.category(ch) == "Mn" and prev_latin:
@@ -230,14 +254,38 @@ ZH_PATTERNS = [
     r"假装|冒充|扮演|伪装|装作|充当|冒名",
     r"(?:回避|岔开|转移话题|转移注意|不要承认|别承认|不承认|否认|不要透露|别透露|不透露|不要说|别说|隐瞒|含糊|敷衍|装傻|绕开|避而不答|不回答)",
 ]
-EN_PATTERNS += [
-    # unconditional yes/no to a question (the question itself is often the identity check)
-    r"\bif (?:they|anyone|someone|somebody|he|she|the (?:agent|rep\w*|caller|person)|asked|you(?:'re| are) asked)\b"
-    r"[^.!?\n]*\b(?:say|answer|reply|respond|tell them)\w*\s+(?:with\s+)?[\"']?(?:yes|no|nope|yeah|yep|correct|"
-    r"right|of course|absolutely|definitely)\b",
-    r"\b(?:always|just|simply)\s+(?:say|answer|reply|respond)\w*\s+(?:yes|no)\b",
-]
 _EN = [re.compile(p) for p in EN_PATTERNS]
+
+# A bare yes/no instruction ("if they ask, say no") is rejected: the unstated question may be "are you an AI?". A
+# yes/no tied to a stated, non-identity question ("if they ask whether you want to keep the service, say no") is
+# fine.
+_YES_NO = re.compile(r"\b(?:say|says|answer|reply|respond|tell (?:them|him|her))\w*\s+(?:with\s+)?[\"']?"
+                     r"(?:yes|no|nope|yeah|yep|correct|right|of course|absolutely|definitely|that'?s right)\b"
+                     r"(?P<after>[^.!?\n]*)")
+_ABOUT_CALLER = re.compile(
+    r"\b(?:are you|you are|you'?re|youre|were you|is this|this is|is it|it'?s|is that|was that|am i|who|what are you|"
+    r"what you are|what this is|what it is|real|human\w*|person|people|ai|bot|robot|machine|recording|recorded|"
+    r"automated|identity|calling|caller|speaking|on the line|yourself|name|holder|owner|customer|subscriber|member|"
+    r"authori[sz]\w*|related|family|spouse|wife|husband|relative|actually|really|truly|honestly|"
+    r"recognized|verified|legit\w*|genuine|live)\b")
+_CONDITION = re.compile(r"\b(?:if|when|whenever|once|after|should)\b(?P<cond>[^.!?\n]*)$")
+_BARE = re.compile(r"\b(?:they|anyone|someone|somebody|he|she|it|the other party|asked|asks?|ask(?:ing|ed)?|"
+                   r"you|me|us|about|that|this|whether|if|so|any|anything|questions?|again|directly|at all|"
+                   r"are|is|do|does|ever|just|then|the|a|an|agent|representative|rep|person)\b|[,;:'\"\s-]")
+
+
+def _check_yes_no(sentence: str) -> None:
+    for m in _YES_NO.finditer(sentence):
+        before, after = re.split(r"[.!?;。！？；]", sentence[: m.start()])[-1], m.group("after")
+        if _ABOUT_CALLER.search(before) or _ABOUT_CALLER.search(after):
+            raise CallPolicyError(f"a yes/no answer about the caller is not a task step: {m.group(0)!r}")
+        if re.match(r"\s*(?:thanks|thank you|to (?!the question|that question|it\b|this\b))", after):
+            continue                                   # 'say no thanks', 'say no to the upgrade'
+        c = _CONDITION.search(before)
+        if c and _BARE.sub("", c.group("cond")).strip():
+            continue                                   # tied to a stated, non-identity question or event
+        raise CallPolicyError(f"a bare yes/no instruction is not allowed; state the question it answers: "
+                              f"{m.group(0)!r}")
 _ZH = [re.compile(p) for p in ZH_PATTERNS]
 
 
@@ -267,13 +315,13 @@ def validate_script(text: str, names: Iterable[str] = ()) -> None:
     if not isinstance(text, str) or not text.strip():
         raise CallPolicyError("call script is empty")
     forms, cjk = variants(text), _cjk(text)
-    norm = forms[0]
     for form in forms:
         for sentence in re.split(r"(?<=[.!?;\n])\s+|[。！？；\n]", form):
             for rx in _EN:
                 m = rx.search(sentence)
                 if m:
                     raise CallPolicyError(f"call script makes a forbidden identity claim or evasion: {m.group(0)!r}")
+            _check_yes_no(sentence)
     for rx in _ZH:
         m = rx.search(cjk)
         if m:
@@ -290,14 +338,73 @@ IDENTITY_TOPIC = re.compile(
     r"pretend\w*|impersonat\w*|disclos\w* (?:that|what) you|are you (?:a|an|real)|"
     r"software|computer|machine\w*|(?<!loyalty )(?<!rewards )(?<!membership )(?<!points )(?<!referral )"
     r"(?<!discount )(?<!partner )(?<!retention )(?<!promo )(?<!promotional )(?<!savings )(?<!benefits )program\w*|"
-    r"agent|agents|representative|rep|caller|operator|assistant|voice|flesh|living|alive|real|genuine|"
-    r"your name|my name|name is|named|call (?:yourself|me)|go by|introduce yourself|sign (?:as|off as)|"
+    r"assistant|voice|flesh|living|alive|real|genuine|"
+    r"your name|my name|call (?:yourself|me)|go by|introduce yourself|sign (?:as|off as)|"
+    r"you(?:'re| are)? named|i'?m named|"
     r"spouse|husband|wife|partner(?! offer| discount| deal| perk| site| store)|boyfriend|girlfriend|fianc\w*|family(?! plan| sharing| subscription| bundle| tier| pack)|relative|son|daughter|mother|father|mom|dad|"
     r"parent|brother|sister|sibling|child|guardian|caregiver|roommate|household member|"
     r"authori[sz]\w*|power of attorney|attorney|proxy|on file as|listed as|account manager|secondary user|"
-    r"in person|myself|yourself|themselves|answer (?:yes|no))\b")
+    r"in person|myself|yourself|themselves|"
+    # other languages (cheap coverage; the rules block still overrides)
+    r"humain\w*|mensch\w*|humano\w*|humana\w*|persona|personne|zhen ?ren|ren ?lei|ji ?qi ?ren|rengong ?zhineng)\b"
+    # claims that the caller IS an agent / representative / operator (asking for one is fine)
+    r"|\b(?:you'?re|you are|youre|you were|to be|yourself as|i'?m|i am|im|this is|it'?s|become|be|play|as an?|"
+    r"as the|identify as|calling as)\s+(?:(?:a|an|the|their|his|her|your|one of (?:the|their))\s+)?"
+    r"(?:(?:live|real|human|customer|service|support|account|authori[sz]ed|licensed|insurance|sales|retention|"
+    r"billing|phone|company|verified|official|staff|internal)\s+){0,3}(?:agent|representative|rep|caller|operator|"
+    r"employee|staff member|associate)s?\b")
+# Task steps may refer to the caller only as the AI assistant: first-person words never claim the account, and the
+# step may not point at instructions stored somewhere else.
+TASK_ONLY_PATTERNS = [
+    (r"\b(?:my|mine|our|ours|myself|ourselves)\b|\bwe(?:'ve|'d| have| had| were| signed| subscribed| joined| "
+     r"opened| own| paid| bought)\b", "first-person words may not claim the account; write 'the account'"),
+    (r"\bi(?:'ve|'d|'m| have| had| am| was| will| would)?\s+(?:(?:been|always|already|just|recently|originally|also|"
+     r"never|personally|first|still)\s+)*(?:signed|subscribed|joined|opened|bought|purchased|ordered|paid|own|"
+     r"owned|registered|enrolled|used|live|lived|moved|got|received|been|a (?:loyal |long[- ]?time |longtime )?"
+     r"(?:customer|member|subscriber|client|cardholder|user|patron))\b",
+     "first-person words may not claim the account's history; the caller is the AI assistant"),
+    (r"\byours\b|\byour (?:own )?(?:account|subscription|plan|service|membership|card|bill|policy|order|contract|"
+     r"history|address|phone|email|loyalty)\b|\byou(?:'ve| have| had)?\s+(?:(?:been|always|already)\s+)*"
+     r"(?:a (?:loyal |long[- ]?time )?(?:customer|member|subscriber|client)|signed up|subscribed|joined|opened|own|"
+     r"paid)\b", "the account belongs to the user, not to the caller"),
+    (r"\bas if\b|\bas though\b|\bspeak(?:ing)? as\b|\brefer to (?:the|this|that) account as\b",
+     "the caller may not role-play"),
+    (r"\b(?:instructions?|directions|commands?|rules|steps|guidance|orders)\s+(?:in|from|at|on|inside|within|"
+     r"found in|given in|written in|listed in|stored in)\b|\b(?:follow|obey|do whatever|do what|execute|carry out)\b"
+     r"[^.!?\n]{0,50}\b(?:notes?|field|memo|comments?|email|message|document|file|attachment|description|ticket|"
+     r"record|says?)\b", "task steps must be stated in full, not point to instructions elsewhere"),
+]
+_TASK_ONLY = [(re.compile(p), why) for p, why in TASK_ONLY_PATTERNS]
+_OPAQUE = re.compile(r"(?<![A-Za-z0-9+/=])(?=[A-Za-z0-9+/=]*[A-Za-z])(?=[A-Za-z0-9+/=]*[0-9+/=])[A-Za-z0-9+/=]{24,}")
+# words that only ever join into an identity term when someone splits them ('hu man', 'ro bot')
+JOIN_TERMS = {"human", "humans", "humanbeing", "robot", "chatbot", "person", "machine", "software", "computer",
+              "assistant", "artificial", "intelligence", "bot", "ai"}
+STEP_SCRIPTS = {"LATIN", "CJK"}
+
+
+def _check_step_charset(step: str) -> None:
+    """Steps are written in Latin or Chinese/Japanese script (plus digits, punctuation and symbols)."""
+    for ch in unicodedata.normalize("NFKC", step):
+        if unicodedata.category(ch).startswith("L") and _script(ch) not in STEP_SCRIPTS:
+            raise CallPolicyError(f"task steps must use Latin or Chinese/Japanese letters only (found {ch!r}, "
+                                  f"{_script(ch).title()})")
+
+
+def _check_split_words(form: str) -> None:
+    tokens = re.findall(r"[a-z]+", form)
+    for i in range(len(tokens)):
+        for k in (2, 3):
+            part = tokens[i:i + k]
+            if len(part) == k and "".join(part) in JOIN_TERMS and not all(p in JOIN_TERMS for p in part):
+                raise CallPolicyError(f"task steps may not talk about the caller's identity "
+                                      f"({' '.join(part)!r})")
+
+
 IDENTITY_TOPIC_ZH = re.compile(r"(?<![a-z])ai(?![a-z])|人工智能|机器人|机器|真人|人类|本人|身份|录音|自动|假装|冒充|扮演|"
-                               r"是不是人|是人吗|软件|电脑程序|计算机程序|客服代表|代理人|名叫|叫做|名字|姓名是|我叫|你叫|"
+                               r"是不是人|是人吗|软件|电脑程序|计算机程序|代理人|名叫|叫做|你的名字|我的名字|你的姓名|姓名是|我叫|你叫|"
+                               r"活生生|活人|是个人|是一个人|真实的人|你是(?:个|一个|一位)?(?:客服|代表|工作人员|员工|职员|人)|"
+                               r"说你是|回答不|答不|回答没有|回答否|就回答|"
+                               r"我的(?:账户|账号|帐户|帐号|订阅|会员|卡|套餐|服务|订单|保单)|我们的|我(?:一直|已经)?是(?:老|忠实)?(?:客户|会员|用户)|"
                                r"丈夫|妻子|老公|老婆|配偶|爱人|家属|家人|亲属|亲戚|儿子|女儿|父亲|母亲|爸爸|妈妈|兄弟|姐妹|"
                                r"授权|委托|监护人|就说|回答是|回答不是")
 
@@ -306,12 +413,22 @@ def validate_task_step(step: str, names: Iterable[str] = ()) -> None:
     """A task step may not discuss identity at all; the generated identity block alone covers who is calling."""
     if not isinstance(step, str) or not step.strip():
         raise CallPolicyError("task step is empty")
+    _check_step_charset(step)
+    if _OPAQUE.search(unicodedata.normalize("NFKC", step)):
+        raise CallPolicyError("task steps may not contain encoded or opaque text")
     cjk = _cjk(step)
-    m = next((x for x in (IDENTITY_TOPIC.search(f) for f in variants(step)) if x), None) or \
+    forms = variants(step)
+    m = next((x for x in (IDENTITY_TOPIC.search(f) for f in forms) if x), None) or \
         IDENTITY_TOPIC_ZH.search(cjk)
     if m:
         raise CallPolicyError(f"task steps may not talk about the caller's identity ({m.group(0)!r}); "
                               "the generated identity rules handle that")
+    for f in forms:
+        _check_split_words(f)
+        for rx, why in _TASK_ONLY:
+            m = rx.search(f)
+            if m:
+                raise CallPolicyError(f"{why} ({m.group(0)!r})")
     validate_script(step, names)
 
 
@@ -326,9 +443,9 @@ def _check_joined(steps: list[str], names: Iterable[str]) -> None:
 
 
 def _identity_block(user_name: str, policy: CallPolicy, lang: str) -> list[str]:
-    opening = OPENING[lang][policy.proactive_ai_disclosure].format(user_name=user_name)
+    opening = OPENING[lang].format(user_name=user_name)
     truthful = TRUTHFUL_ANSWER[lang].format(user_name=user_name)
-    volunteer = VOLUNTEER[lang][policy.proactive_ai_disclosure]
+    volunteer = VOLUNTEER[lang]
     return [r.format(opening=opening, truthful=truthful, volunteer=volunteer, user_name=user_name)
             for r in RULES[lang]]
 
@@ -337,13 +454,25 @@ def _identity_block(user_name: str, policy: CallPolicy, lang: str) -> list[str]:
 NAME_MAX_CHARS = 40
 NAME_MAX_WORDS = 4
 SCRIPT_GROUPS = {"HIRAGANA": "CJK", "KATAKANA": "CJK", "CJK": "CJK", "IDEOGRAPHIC": "CJK"}
+# Names are already bound to the saved identity, charset-checked and limited to 4 words, so the name check uses a
+# short list of unambiguous instruction and identity words instead of the task-step filters (which would reject
+# real names such as 'Nguyễn Văn An', 'Grace Son', 'Ray Parent', 'Sam Person', 'Destiny Real' or 'Rob Agent').
 NAME_STOPWORDS = {
+    # instruction / prompt words
     "you", "your", "yours", "yourself", "i", "me", "my", "mine", "we", "us", "they", "them", "say", "said", "tell",
     "ignore", "disregard", "override", "rule", "rules", "above", "below", "previous", "instead", "if", "ask",
-    "asked", "not", "no", "yes", "are", "am", "is", "be", "was", "answer", "reply", "claim", "never", "always",
-    "the", "a", "an", "of", "to", "and", "or", "but", "as", "system", "prompt", "instruction", "instructions",
-    "step", "steps", "task", "policy", "script", "honest", "truth", "truthfully", "lie", "deny", "only",
+    "asked", "not", "yes", "answer", "reply", "claim", "never", "always", "system", "prompt", "instruction",
+    "instructions", "step", "steps", "task", "policy", "script", "honest", "truth", "truthfully", "lie", "deny",
+    "pretend", "conceal", "hide", "secret", "speaking", "calling", "personally", "up",
+    # identity words
+    "human", "humans", "robot", "bot", "chatbot", "cyborg", "android", "machine", "computer", "software",
+    "assistant", "automated", "recording", "siri",
+    # roles and relations that would turn the name into a claim (calling as family stays an open decision)
+    "mom", "mommy", "dad", "daddy", "husband", "wife", "spouse", "authorized", "authorised", "attorney", "proxy",
+    "holder", "owner", "customer", "user", "subscriber", "cardholder", "policyholder",
 }
+NAME_STOPWORDS_ZH = re.compile(r"人工智能|机器人|机器|真人|人类|本人|助手|录音|自动|授权|委托|用户|客户|户主|持卡人|"
+                               r"忽略|规则|指令|回答|假装|冒充")
 
 
 def _script(ch: str) -> str:
@@ -381,14 +510,19 @@ def check_name(name: Any, field: str = "call_user_name") -> str:
                 scripts.add(_script(ch))
     if len(scripts) != 1:
         raise CallPolicyError(f"{field} mixes writing systems ({', '.join(sorted(scripts))}); use one script")
-    folded = {w for f in variants(n) for w in re.split(r"[\s'-]+", f)}
-    bad = folded & NAME_STOPWORDS
+    forms = variants(n)
+    folded = {w for f in forms for w in re.split(r"[\s'-]+", f)}
+    joined = {f.replace(" ", "").replace("-", "").replace("'", "") for f in forms}
+    bad = (folded | joined) & NAME_STOPWORDS
+    # 'AI' (or a look-alike) is not a name; the romanized surname 'Ai' (艾) is
+    if any(fold(w).lower() == "ai" and w != "Ai" for w in re.split(r"[\s'-]+", n)) or \
+            any(j == "ai" for j in joined) and n != "Ai":
+        bad |= {"ai"}
     if bad:
         raise CallPolicyError(f"{field} contains a word that is not part of a name: {sorted(bad)}")
-    m = next((x for x in (IDENTITY_TOPIC.search(f) for f in variants(n)) if x), None) or \
-        IDENTITY_TOPIC_ZH.search(_cjk(n))
+    m = NAME_STOPWORDS_ZH.search(_cjk(n))
     if m:
-        raise CallPolicyError(f"{field} contains an identity term ({m.group(0)!r})")
+        raise CallPolicyError(f"{field} contains a word that is not part of a name ({m.group(0)!r})")
     validate_script(n)
     return n
 
@@ -443,7 +577,7 @@ def build_call_instructions(user_name: str, policy: CallPolicy | None = None, la
     policy = policy or load_policy()
     lang = lang if lang in OPENING else "en"
     user_name = _check_name(user_name)
-    return {"opening": OPENING[lang][policy.proactive_ai_disclosure].format(user_name=user_name),
+    return {"opening": OPENING[lang].format(user_name=user_name),
             "truthful_answer": TRUTHFUL_ANSWER[lang].format(user_name=user_name),
             "rules": _identity_block(user_name, policy, lang),
             "proactive_ai_disclosure": policy.proactive_ai_disclosure, "truthful_if_asked": True}
@@ -491,6 +625,8 @@ def validate_call_draft(draft: Any, user_name: Any, account_holder_name: str | N
     if lang is None:
         raise CallPolicyError("the identity rules block was edited or does not match call_user_name; "
                               "rebuild the script with build_call_script")
+    if len(head) < 2 or DISCLOSURE[lang] not in head[1]:
+        raise CallPolicyError("the call script must open by disclosing that the caller is an AI (Q3)")
     if not tail:
         raise CallPolicyError("a call script needs at least one task step")
     steps = []

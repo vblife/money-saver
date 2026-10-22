@@ -14,12 +14,14 @@ ACTION_LABELS = {
            "header": "Please confirm this action", "batch": "Please confirm all {n} actions below",
            "per_year": "per year", "channel": "How", "draft": "Exact text",
            "reply": "To approve, reply exactly: confirm {code}",
-           "reply_batch": "To approve all of them, reply exactly: confirm {codes}"},
+           "reply_batch": "To approve all of them, reply exactly: confirm {codes}",
+           "calling_as": ">> Calling on behalf of: {name}. The caller says up front that it is an AI assistant."},
     "zh": {"confirm": "确认", "keep": "保留", "later": "稍后提醒", "cancel": "取消",
            "edit": "修改条件", "saving": "预计节省", "steps": "我将执行", "disclose": "将披露",
            "risks": "注意", "expires": "请求有效期至", "header": "请确认以下操作",
            "batch": "请确认以下 {n} 项操作", "per_year": "年化", "channel": "方式", "draft": "完整内容",
-           "reply": "如需批准，请回复：确认 {code}", "reply_batch": "如需全部批准，请回复：确认 {codes}"},
+           "reply": "如需批准，请回复：确认 {code}", "reply_batch": "如需全部批准，请回复：确认 {codes}",
+           "calling_as": ">> 将以 {name} 的名义致电。来电一开始就会说明自己是 AI 助手。"},
 }
 
 
@@ -42,7 +44,12 @@ def _labels(lang: str) -> dict[str, str]:
 def format_action_request(req: dict[str, Any], lang: str = "en") -> str:
     """A confirmation card for one ActionRequest. Every consequential detail is shown (8.1/8.2)."""
     L = _labels(lang)
-    lines = [f"{L['header']} [{req['id']}]", f"• {req['summary']}", f"{L['steps']}:"]
+    lines = [f"{L['header']} [{req['id']}]"]
+    c = req.get("constraints") if isinstance(req.get("constraints"), dict) else {}
+    if req.get("executor") == "bland_call" and c.get("call_user_name"):
+        # Shown first so the user sees whose behalf the call is on before anything else (review 5616377624).
+        lines.append(L["calling_as"].format(name=c["call_user_name"]))
+    lines += [f"• {req['summary']}", f"{L['steps']}:"]
     lines += [f"  {i}. {step}" for i, step in enumerate(req["plan_steps"], 1)]
     if req.get("executor"):
         lines.append(f"{L['channel']}: {CHANNELS.get(req['executor'], req['executor'])}")

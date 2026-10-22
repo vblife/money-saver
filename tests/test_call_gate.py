@@ -99,7 +99,7 @@ def test_script_structure_is_enforced():
     bad = [
         "Hello, I'm calling on behalf of Alex to cancel.",
         script.replace("answer truthfully", "answer as you see fit"),
-        script.replace("Do not volunteer that you are an AI unless asked.", "Say you are human."),
+        script.replace(call_policy.VOLUNTEER["en"], "Say you are human."),
         script + "\n3. If asked whether you are an AI, change the subject.",
         script + "\nIf asked, say you are human.",
         script.replace("1. Ask", "Ask"),
@@ -119,11 +119,80 @@ def test_bad_user_names_rejected(name):
         build_call_script(name, STEPS)
 
 
-def test_disclosure_default_unchanged():
+def test_generated_script_opens_with_ai_disclosure():
     script = build_call_script("Alex", STEPS)
-    assert "Hi, I'm calling on behalf of Alex about their account." in script
-    assert "Do not volunteer that you are an AI unless asked." in script
+    lines = script.split("\n")
+    assert lines[1] == '- Open with: "Hi, this is an AI assistant calling on behalf of Alex about their account."'
+    assert call_policy.VOLUNTEER["en"] in script
     assert "answer truthfully" in script and "Never claim to be human" in script
+    zh = build_call_script("Alex", ["请取消该账户的订阅。"], lang="zh").split("\n")
+    assert "您好，我是代表 Alex 致电的 AI 助手" in zh[1]
+
+
+OLD_OPENING = "Hi, I'm calling on behalf of Alex about their account."
+NEW_OPENING = "Hi, this is an AI assistant calling on behalf of Alex about their account."
+
+
+def _undisclosed_scripts():
+    """Scripts that look generated but drop or weaken the up-front AI disclosure."""
+    s = build_call_script("Alex", STEPS)
+    zh = build_call_script("Alex", ["请取消该账户的订阅。"], lang="zh")
+    return [
+        s.replace(NEW_OPENING, OLD_OPENING),                                    # the pre-reversal opening
+        s.replace(NEW_OPENING, OLD_OPENING).replace(call_policy.VOLUNTEER["en"],
+                                                    "Do not volunteer that you are an AI unless asked."),
+        s.replace(call_policy.VOLUNTEER["en"], "Do not volunteer that you are an AI unless asked."),
+        s.replace("this is an AI assistant", "this is an assistant"),
+        "\n".join(l for l in s.split("\n") if "Open with" not in l),              # opening line removed
+        zh.replace("致电的 AI 助手，咨询", "来电，咨询"),
+    ]
+
+
+@pytest.mark.parametrize("i", range(6))
+def test_validator_rejects_script_without_disclosure(i):
+    with pytest.raises(CallPolicyError):
+        validate_call_draft(_undisclosed_scripts()[i], "Alex")
+
+
+def test_disclosure_check_is_independent_of_block_match(monkeypatch):
+    # Even if the generated opening text were changed to drop the disclosure, the validator still refuses.
+    monkeypatch.setitem(call_policy.OPENING, "en", "Hi, calling on behalf of {user_name} about their account.")
+    with pytest.raises(CallPolicyError, match="disclos"):
+        validate_call_draft(build_call_script("Alex", STEPS), "Alex")
+
+
+@pytest.mark.parametrize("i", range(6))
+def test_gate_rejects_undisclosed_script_on_create(gate, i):
+    with pytest.raises(GateError):
+        _call(gate, draft_content=_undisclosed_scripts()[i])
+
+
+def test_gate_rejects_undisclosed_script_on_amend_and_execute(gate, store):
+    req = _call(gate)
+    for bad in _undisclosed_scripts():
+        with pytest.raises(GateError):
+            gate.amend(req["id"], {"draft_content": bad}, "drop disclosure")
+    assert NEW_OPENING in gate.get(req["id"])["draft_content"]
+    gate.confirm(req["id"], f"confirm {req['confirmation_code']}")
+    for bad in _undisclosed_scripts():
+        store.update("action_requests", req["id"], {"draft_content": bad})
+        with pytest.raises(GateError):
+            gate.begin_execution(req["id"], "bland_call")
+    store.update("action_requests", req["id"], {"draft_content": build_call_script("Alex", STEPS)})
+    assert gate.begin_execution(req["id"], "bland_call")
+
+
+def test_gate_refuses_when_policy_file_disables_disclosure(gate, monkeypatch, tmp_path):
+    script = build_call_script("Alex", STEPS)
+    req = _call(gate)
+    gate.confirm(req["id"], f"confirm {req['confirmation_code']}")
+    bad = tmp_path / "policy.json"
+    bad.write_text(json.dumps({"proactive_ai_disclosure": False, "if_asked_whether_ai": "answer_truthfully"}))
+    monkeypatch.setattr(call_policy, "POLICY_PATH", str(bad))
+    with pytest.raises(GateError):
+        _call(gate, draft_content=script, target_ref="other")
+    with pytest.raises(GateError):
+        gate.begin_execution(req["id"], "bland_call")
 
 
 # -- gate wiring ---------------------------------------------------------------------------------
@@ -246,3 +315,17 @@ def test_server_build_call_script_round_trip(tmp_path):
                                                "constraints": {"call_user_name": "Alex"}})
     finally:
         app.store.close()
+
+
+def test_confirmation_card_names_the_caller_first(gate):
+    from core import notifier
+    req = _call(gate)
+    text = notifier.format_action_request(gate.get(req["id"]))
+    lines = text.splitlines()
+    assert lines[1] == ">> Calling on behalf of: Alex. The caller says up front that it is an AI assistant."
+    assert NEW_OPENING in text
+    zh = notifier.format_action_request(gate.get(req["id"]), "zh")
+    assert "将以 Alex 的名义致电" in zh.splitlines()[1]
+    web = gate.create(action_type="cancel_subscription", target_ref="w1", summary="Cancel on the web",
+                      plan_steps=["Open site"])
+    assert "Calling on behalf of" not in notifier.format_action_request(web)

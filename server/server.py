@@ -124,7 +124,7 @@ TOOLS = [
      "description": "Only with the name the user gave you, in their own words. The bot calls on behalf of this name; every call request must use it. Letters, spaces, hyphens and apostrophes only, at most 40 characters and 4 words. account_holder_names: other names on the user's accounts, if the user listed them.",
      "inputSchema": O({"user_name": S, "account_holder_names": ARR_S}, ["user_name"])},
     {"name": "build_call_script", "title": "Build a call script",
-     "description": "D30 call honesty: returns the only accepted bland_call draft_content and constraints, built for the user's saved name (set_call_identity): the generated identity rules (no proactive AI disclosure; if asked, answer truthfully; never claim to be human or the user) followed by your task steps. Task steps may not mention identity, names, family, or authorization at all. Places no call.",
+     "description": "D30 call honesty: returns the only accepted bland_call draft_content and constraints, built for the user's saved name (set_call_identity): the generated identity rules (opens by disclosing it is an AI assistant calling on behalf of the user; if asked, answer truthfully; never claim to be human or the user) followed by your task steps. Task steps may not mention identity, names, family, or authorization at all. Places no call.",
      "inputSchema": O({"task_steps": ARR_S, "account_holder_name": S, "lang": {"type": "string", "enum": ["en", "zh"]}},
                       ["task_steps"]), "annotations": RO},
     {"name": "list_action_requests", "title": "List action requests",

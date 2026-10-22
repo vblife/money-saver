@@ -1,7 +1,10 @@
-"""Q3 call honesty policy (D30): no proactive disclosure by default, truthful if asked, never configurable to lie."""
+"""Q3 call honesty policy (D30, revised 2026-10-22): disclose up front (locked), truthful if asked, never configurable
+to lie."""
 import json
 
 import pytest
+
+from core import call_policy
 
 from core.call_policy import (CallPolicy, CallPolicyError, build_call_instructions, load_policy, parse_policy,
                               validate_script)
@@ -9,24 +12,42 @@ from core.call_policy import (CallPolicy, CallPolicyError, build_call_instructio
 
 def test_shipped_policy_defaults():
     p = load_policy()
-    assert p.proactive_ai_disclosure is False and p.truthful_if_asked is True
+    assert p.proactive_ai_disclosure is True and p.truthful_if_asked is True
+    with open(call_policy.POLICY_PATH, encoding="utf-8") as fh:
+        assert json.load(fh)["proactive_ai_disclosure"] is True
+    assert CallPolicy().proactive_ai_disclosure is True
+    assert parse_policy({}).proactive_ai_disclosure is True   # loader default
 
 
-def test_default_instructions_do_not_volunteer_but_answer_truthfully():
+def test_instructions_disclose_up_front_and_answer_truthfully():
     out = build_call_instructions("Alex")
-    assert out["opening"] == "Hi, I'm calling on behalf of Alex about their account."
-    assert "AI" not in out["opening"]
+    assert out["opening"] == "Hi, this is an AI assistant calling on behalf of Alex about their account."
     assert out["truthful_answer"] == "Yes, I'm an AI assistant calling on behalf of Alex."
     text = " ".join(out["rules"])
+    assert "first sentence" in text and "AI assistant" in text
     assert "answer truthfully" in text and "Never claim to be human" in text and "account holder" in text
-    assert out["truthful_if_asked"] is True
+    assert out["truthful_if_asked"] is True and out["proactive_ai_disclosure"] is True
 
 
-def test_opt_in_disclosure_and_zh():
-    out = build_call_instructions("Alex", CallPolicy(proactive_ai_disclosure=True))
-    assert "AI assistant" in out["opening"]
+def test_zh_discloses_up_front():
     zh = build_call_instructions("Alex", lang="zh")
-    assert "AI" not in zh["opening"] and "是的，我是代表 Alex 致电的 AI 助手" in zh["truthful_answer"]
+    assert zh["opening"].startswith("您好，我是代表 Alex 致电的 AI 助手")
+    assert "是的，我是代表 Alex 致电的 AI 助手" in zh["truthful_answer"]
+
+
+@pytest.mark.parametrize("value", [False, None, 0, 1, "true", "false", "no"])
+def test_disclosure_cannot_be_disabled_in_policy_file(value, tmp_path):
+    with pytest.raises(CallPolicyError):
+        parse_policy({"proactive_ai_disclosure": value, "if_asked_whether_ai": "answer_truthfully"})
+    f = tmp_path / "policy.json"
+    f.write_text(json.dumps({"proactive_ai_disclosure": value, "if_asked_whether_ai": "answer_truthfully"}))
+    with pytest.raises(CallPolicyError):
+        load_policy(str(f))
+
+
+def test_disclosure_cannot_be_disabled_in_code():
+    with pytest.raises(CallPolicyError):
+        CallPolicy(proactive_ai_disclosure=False)
 
 
 @pytest.mark.parametrize("doc", [
@@ -103,10 +124,17 @@ def test_docs_and_skill_match_the_decision():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     read = lambda *p: open(os.path.join(root, *p), encoding="utf-8").read()
     skill = read("skills", "money-saver-core", "SKILL.md")
-    assert "always say you are an AI" not in skill
-    assert "never claim to be human" in skill.lower()
+    opening = "Hi, this is an AI\nassistant calling on behalf of <user> about their account."
+    assert "disclose up front" in skill and opening in skill and "never claim to be human" in skill.lower()
+    assert "Do not volunteer" not in skill
     readme = read("config", "call_scripts", "README.md")
-    assert "must open with an AI-assistant disclosure" not in readme
-    assert "Truthful if asked" in readme
+    assert "Disclose up front, always" in readme and "proactive_ai_disclosure: true" in readme
+    assert "Truthful if asked" in readme and "No proactive AI disclosure" not in readme
     decisions = read("docs", "decisions.md")
-    assert "D30" in decisions and "2026-10-22" in decisions
+    assert "D30" in decisions and "2026-10-22" in decisions and "supersedes" in decisions
+    assert "proactive_ai_disclosure: false` (the default" not in decisions
+    spec = read("docs", "spec.md")
+    assert "不主动声明 AI 身份（Q3" not in spec and "开场就必须主动声明自己是 AI" in spec
+    assert "我不会主动说明自己是 AI" not in spec
+    plan = read("docs", "plan.md")
+    assert "no proactive AI disclosure" not in plan and "disclose up front" in plan

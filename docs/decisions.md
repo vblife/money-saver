@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | Q1 | Rocket Money ending pay-for-results negotiation on 11/2 (unverified) | Verify through official announcement/help center first; never cite unverified claims in product copy | Marketing only | No |
 | Q2 | Business model | Free beta for the MVP; ledger "verified" rules per spec 6.11 | `core/ledger.py` | No |
-| Q3 | Must Bland calls disclose AI identity? | **Resolved by Charles, 2026-10-22 (D30):** calls do not proactively say they are an AI. If the other party directly asks, the caller answers truthfully and never claims to be human | `config/call_scripts/policy.json`, `core/call_policy.py`, `skills/money-saver-core` | No |
+| Q3 | Must Bland calls disclose AI identity? | **Resolved by Charles, 2026-10-22 (D30): disclose up front.** Every call opens by saying the caller is an AI assistant calling on behalf of the user (locked on). If asked, the caller answers truthfully and never claims to be human. This supersedes his earlier choice the same day (no proactive disclosure) | `config/call_scripts/policy.json`, `core/call_policy.py`, `skills/money-saver-core` | No |
 | Q4 | Allow pre-authorized "cancel before trial ends"? | Allowed, with a 2-hour revoke window (FR-1-9) | `execute_not_before` in `core/action_gate.py` | No |
 | Q5 | May the bot actually cancel as negotiation leverage? | Not in the MVP; it may only say the user is considering cancelling | M5 | No |
 | Q6 | Change module order? | Keep the chapter 12 order | `docs/plan.md` | No |
@@ -18,7 +18,8 @@
 | Q12 | Licensed agent for insurance quotes? | No; only point to official comparison/insurer sites, never fill licensed flows | M5 | No |
 
 **Result:** none of the 12 questions blocks M0 or M1 with the defaults above. Q3 was resolved by Charles on
-2026-10-22 (D30). Q11 is still open and must be confirmed by Charles before any live cancellation.
+2026-10-22 (D30): calls disclose up front that the caller is an AI. Q11 is still open and must be confirmed by
+Charles before any live cancellation.
 
 ## Blockers for M1 acceptance (not in spec 13)
 - **B1 - real labelled samples.** M1 recall/precision (>= 90% / >= 85%) is defined on human-labelled samples. The repo
@@ -189,23 +190,36 @@
   how entries become verified is still Charles's decision.
 
 ## Decisions by Charles (2026-10-22)
-- **D30 Call honesty (resolves Q3).** Calls do NOT proactively disclose that they are an AI. If the other party
-  directly asks whether they are talking to an AI (or a bot, a robot, a recording), the caller answers truthfully:
-  "Yes, I'm an AI assistant calling on behalf of <user>." It never claims to be human and never claims to be the user.
-  - `config/call_scripts/policy.json`: `proactive_ai_disclosure: false` (the default; it can be turned on) and
-    `if_asked_whether_ai: answer_truthfully`. `core/call_policy.py` accepts only `answer_truthfully` there and
-    rejects unknown keys, so no config can allow lying. `CallPolicy(truthful_if_asked=False)` raises.
+- **D30 Call honesty (resolves Q3): disclose up front.** Charles revised this decision on 2026-10-22, in his own
+  words: calls MUST proactively disclose up front that the caller is an AI. This supersedes his earlier choice the same
+  day (no proactive disclosure, truthful if asked).
+  - Every call opens with: "Hi, this is an AI assistant calling on behalf of <user> about their account." (Chinese:
+    「您好，我是代表 <user> 致电的 AI 助手，咨询其账户相关事宜。」). The generated rules also tell the caller to say it is an
+    AI assistant in its first sentence on every call.
+  - Truthful if asked still applies: if the other party asks whether they are talking to an AI (or a bot, a robot,
+    a recording), the answer is "Yes, I'm an AI assistant calling on behalf of <user>." The caller never claims to be
+    human and never claims to be the user.
+  - Both settings are locked. `config/call_scripts/policy.json` has `proactive_ai_disclosure: true` and
+    `if_asked_whether_ai: answer_truthfully`. `core/call_policy.py` refuses to load any other value (including
+    `proactive_ai_disclosure: false`), defaults a missing value to true, and rejects unknown keys.
+    `CallPolicy(proactive_ai_disclosure=False)` and `CallPolicy(truthful_if_asked=False)` raise. Locking it on
+    breaks nothing: no code path needed the undisclosed opening. Turning it off again would need a new decision by
+    Charles and a code change, not a config edit.
   - Call scripts are allowlist-structured. `build_call_script(user_name, task_steps)` writes a generated
-    `[CALL IDENTITY RULES]` block (opening line, truthful answer, never claim to be human or the user, rules override
-    task steps), then `[TASK]` with numbered steps. Task steps may not discuss identity at all: no AI, bot, human,
-    person, pretending, or evasion wording, and no self-claim to be the user's or account holder's name.
+    `[CALL IDENTITY RULES]` block (the disclosing opening line, the truthful answer, never claim to be human or the
+    user, rules override task steps), then `[TASK]` with numbered steps. Task steps may not discuss the caller's
+    identity: no AI, bot, human, person, pretending, or evasion wording, and no self-claim to be the user, the
+    account holder, or an agent or representative.
     `validate_script` is a normalized deny-list backstop. It applies NFKC, straight quotes, A.I. -> ai, removes
     invisible characters, collapses whitespace, lowercases, and has English and Chinese patterns.
   - The action gate enforces this for every `bland_call` request (`place_call`, `negotiate_bill`, phone cancels and
     claims). It runs on create and amend, and again in `begin_execution`. `constraints.call_user_name` (plus
     `constraints.account_holder_name` when different) must be set. The identity block must match exactly for that
-    name, and every task step must pass. Any error, including a policy file that does not load, rejects the request
-    (fail closed). The bot gets a valid script from the `build_call_script` tool.
+    name. The validator also checks, separately, that the opening line carries the AI disclosure, so a script
+    without it is rejected. Every task step must pass. Any error, including a policy file that does not load or
+    tries to turn disclosure off, rejects the request (fail closed). The bot gets a valid script from the
+    `build_call_script` tool. The confirmation card shows "Calling on behalf of: <name>. The caller says up front
+    that it is an AI assistant." as its first line.
   - Names are bound to the user's settings. The user's name, plus any other account-holder names the user lists,
     is saved with `set_call_identity` in `notification_prefs.call_identity` (existing JSON column, no schema
     change). The gate requires a saved identity and re-validates it on every check. It rejects a request whose
@@ -215,17 +229,34 @@
     - Unicode letters in one script (CJK may mix Han and kana), with single spaces, hyphens, and apostrophes only
       between letters. At most 40 characters and 4 words.
     - No digits, punctuation, full-width or compatibility forms, invisible characters, or mixed scripts.
-    - No instruction words ("ignore", "say", "if", "you", ...).
-    - The identity-term and deny-list checks also run on the name.
-    - This closes injection through the name, which appears verbatim in the generated rules.
-  - Task-step checks run on several forms of the text: plain, spaced letters joined ("h u m a n"), Cyrillic and
-    Greek homoglyphs folded to Latin, and digit swaps undone ("hum4n"). They also run on all steps joined together,
-    so a claim cannot be split across steps.
-    - Identity terms now include software, program (not "loyalty program" and similar), machine, agent,
-      representative, caller, your name / named / go by, and family words (spouse, husband, wife, relative, ...).
-      They also include authorized / power of attorney.
-    - Conditional yes/no instructions ("if they ask, answer no") are rejected. Steps should state actions
-      instead.
+    - A short list of words that are never part of a name: instruction words ("ignore", "say", "if", "you", ...),
+      identity words (human, robot, bot, AI, assistant, machine, ...), and role words (husband, wife, mom, holder,
+      customer, authorized, ...). Real names such as "Nguyễn Văn An", "Grace Son", "Ray Parent", "Sam Person",
+      "Destiny Real", "Rob Agent" and "Ai Weiwei" pass. The task-step filters are not applied to names any more:
+      names are already bound to the saved identity and strictly charset-checked, which leaves little room for
+      injection.
+  - Task-step checks:
+    - Steps use Latin or Chinese/Japanese letters only (plus digits, punctuation and symbols). Other scripts,
+      including Cyrillic, Greek, Armenian and Cherokee look-alikes, are rejected.
+    - Checks run on several forms of the text: plain, spaced letters joined ("h u m a n"), split words joined
+      ("hu man"), confusables folded (Cyrillic, Greek, Armenian, Cherokee, Latin small capitals and other letter
+      variants), and digit swaps undone ("hum4n"). They also run on all steps joined together, so a claim cannot be
+      split across steps. Long encoded strings (base64 and similar) are rejected.
+    - Identity terms include software, program (not "loyalty program" and similar), machine, and family words
+      (spouse, husband, wife, relative, ...), plus authorized / power of attorney. "Agent", "representative",
+      "operator" and "caller" are rejected only in a claim about the caller ("you are a live agent"); asking for one
+      ("Ask if the agent can waive the fee") is fine. The same goes for names: "your name is" is rejected, "ask the
+      representative for their name" is fine.
+    - First person may refer only to the AI assistant, never to the account: "my account", "I have been a customer
+      since 2019", "the account is yours", "speak as if" are rejected.
+    - Steps must be stated in full: "follow the instructions in the notes field" and similar are rejected.
+    - A yes/no answer must name the question it answers, and the question may not be about the caller. "If they ask
+      whether you want to keep the service, say no" is fine; "If they ask, answer no" and "If they ask whether this
+      is a robocall, say no" are rejected.
+    - A small set of other-language identity words is covered (humain, Mensch, humano, zhenren, ...).
+  - A deny-list cannot be complete. The generated rules say they override every task step, and post-call
+    transcript audits (did the caller disclose up front, did it ever claim to be human or the user) are planned for
+    M1d, when Bland calls are wired up.
   - No real calls are placed. Bland calls are still M1d work and still go through the confirmation gate.
 - **D31 Routines on by default.** R1 (daily scan, 05:30), R3 (reminder dispatch, hourly), R4 (trial guard, hourly),
   and R10 (request expiry, hourly) are enabled by default. Each time is in the user's time zone.

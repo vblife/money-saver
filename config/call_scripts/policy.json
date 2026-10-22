@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "note": "Honesty policy for every Bland call script (Q3, decided by Charles 2026-10-22). Loaded and enforced by core/call_policy.py.",
-  "proactive_ai_disclosure": false,
+  "version": 2,
+  "note": "Honesty policy for every Bland call script (Q3, decided by Charles 2026-10-22, revised the same day: disclose up front). Both settings are locked; core/call_policy.py refuses any other value.",
+  "proactive_ai_disclosure": true,
   "if_asked_whether_ai": "answer_truthfully"
 }
