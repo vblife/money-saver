@@ -120,3 +120,7 @@ should be confirmed by Charles before any real call or live cancellation.
   note and must be requested again. Terminal rows are kept. A request without a bound code and text can never be
   approved. A database with a newer version than the code is refused. Every future schema change must bump
   `SCHEMA_VERSION` and add a migration step with a test that starts from the previous frozen schema.
+  A file at `user_version` 0 is only treated as new when it has no tables. If its schema exactly matches frozen v1
+  (`core/schemas/v1.sql`), it is marked v1 and migrated as above. If it exactly matches the current schema and every
+  table is empty (the DDL ran but the stamp was lost), it is stamped. Anything else (current tables with data,
+  partial or extra tables, extra columns, another app's file) raises `SchemaError` and the file is left unchanged.

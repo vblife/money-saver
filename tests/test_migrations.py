@@ -8,7 +8,8 @@ import pytest
 from core.action_gate import ALLOWED_EXECUTORS, ActionGate
 from core.store import SCHEMA_VERSION, V1_DEFAULT_EXECUTOR, Store
 
-V1_SQL = os.path.join(os.path.dirname(__file__), "fixtures", "schema_v1.sql")
+V1_SQL = os.path.join(os.path.dirname(__file__), os.pardir, "core", "schemas", "v1.sql")
+V1_BODY_SHA256 = "5cf408e73b53725bb9c6672ae776fc499008770ea23bd5c0e67174b556679d9e"
 NOW = "2026-10-19T20:00:00Z"
 
 
@@ -137,3 +138,88 @@ def test_pending_row_without_confirmation_binding_cannot_be_approved(tmp_path):
             gate.confirm_batch([req["id"]], msg, shown_text_sha256=None)
     assert gate.get(req["id"])["status"] == "pending_user"
     store.close()
+
+
+# --- user_version 0 with existing tables (review note on core/store.py:224) ---
+
+from core.store import SchemaError, load_frozen_schema  # noqa: E402
+
+
+def test_unversioned_v1_shaped_db_is_migrated_not_stamped(tmp_path):
+    path = str(tmp_path / "v0.db")
+    make_v1_db(path)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA user_version = 0")  # stamp lost
+    conn.commit()
+    conn.close()
+    store = Store(path)
+    assert store.schema_version() == 2
+    assert "executor" in {c[0] for c in columns(store.conn, "action_requests")}
+    rows = {r["id"]: r for r in store.find("action_requests")}
+    assert rows["ar_pending"]["status"] == "expired" and rows["ar_approved"]["status"] == "expired"
+    assert rows["ar_executed"]["status"] == "executed"
+    store.close()
+
+
+def test_unversioned_empty_current_schema_is_stamped(tmp_path):
+    path = str(tmp_path / "s.db")
+    Store(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA user_version = 0")
+    conn.commit()
+    conn.close()
+    store = Store(path)
+    assert store.schema_version() == 2
+    store.close()
+
+
+def test_unversioned_current_schema_with_data_fails_closed(tmp_path):
+    path = str(tmp_path / "s.db")
+    store = Store(path)
+    store.insert("users", {"id": "usr_default"})
+    store.close()
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA user_version = 0")
+    conn.commit()
+    conn.close()
+    with pytest.raises(SchemaError, match="refusing"):
+        Store(path)
+    conn = sqlite3.connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 0  # untouched
+    conn.close()
+
+
+@pytest.mark.parametrize("ddl", [
+    "CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT);",                       # some other app's DB
+    "CREATE TABLE users (id TEXT PRIMARY KEY);",                                  # partial / unknown shape
+    None,                                                                         # v1 minus one table
+    "ALTER",                                                                      # v1 with an extra column
+])
+def test_unversioned_unknown_shape_fails_closed_and_is_untouched(tmp_path, ddl):
+    path = str(tmp_path / "x.db")
+    conn = sqlite3.connect(path)
+    v1 = load_frozen_schema(1)
+    if ddl is None:
+        conn.executescript(v1)
+        conn.execute("DROP TABLE reminders")
+    elif ddl == "ALTER":
+        conn.executescript(v1)
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN extra TEXT")
+    else:
+        conn.executescript(ddl)
+    conn.commit()
+    before = conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall()
+    conn.close()
+    with pytest.raises(SchemaError, match="fail closed"):
+        Store(path)
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall() == before
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+    conn.close()
+
+
+def test_frozen_v1_schema_is_unchanged():
+    """The frozen v1 DDL must stay byte-for-byte what shipped at 87b31c9 (only the header comment differs)."""
+    import hashlib
+    body = load_frozen_schema(1).split("\n", 1)[1]
+    assert hashlib.sha256(body.encode()).hexdigest() == V1_BODY_SHA256

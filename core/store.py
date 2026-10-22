@@ -18,6 +18,37 @@ from .util import default_db_path, new_id, to_iso, utcnow
 SCHEMA_VERSION = 2
 # v1 (PR #1 head 87b31c9): original chapter 6 schema.
 # v2: action_requests gains executor (NOT NULL), confirmation_code/_text/_sha256, approval_source, execute_by.
+SCHEMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schemas")
+
+
+class SchemaError(RuntimeError):
+    """The database file cannot be safely opened by this code."""
+
+
+def load_frozen_schema(version: int) -> str:
+    with open(os.path.join(SCHEMA_DIR, f"v{version}.sql"), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _norm_sql(sql: str) -> str:
+    sql = re.sub(r"\bIF NOT EXISTS\b", "", sql, flags=re.I).replace('"', "")
+    return re.sub(r"\s+", " ", sql).replace("( ", "(").replace(" )", ")").strip().lower()
+
+
+def _schema_signature(conn: sqlite3.Connection) -> dict[tuple[str, str], str]:
+    rows = conn.execute("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+    return {(r[0], r[1]): _norm_sql(r[2] or "") for r in rows}
+
+
+def _reference_signature(ddl: str) -> dict[tuple[str, str], str]:
+    ref = sqlite3.connect(":memory:")
+    try:
+        ref.executescript(ddl)
+        return _schema_signature(ref)
+    finally:
+        ref.close()
+
+
 # Values we generate ourselves skip the forbidden-data scan, but only when they match our exact formats
 # (random hex digests can contain a Luhn-valid digit run). Everything else, including any agent- or
 # email-supplied "*_id" value such as merchant_id or message_id, is scanned.
@@ -220,14 +251,41 @@ class Store:
     def migrate(self) -> None:
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         if version > SCHEMA_VERSION:
-            raise RuntimeError(f"database schema v{version} is newer than this code (v{SCHEMA_VERSION}); refusing to open")
+            raise SchemaError(f"database schema v{version} is newer than this code (v{SCHEMA_VERSION}); refusing to open")
         if version == 0:
+            version = self._adopt_unversioned()
+            if version == SCHEMA_VERSION:
+                return
+        if version == 1:
+            self._migrate_v1_to_v2()
+
+    def _adopt_unversioned(self) -> int:
+        """Handle ``user_version`` 0, which normally means a brand-new file.
+
+        A version-0 file that already has tables is never just stamped. If its schema exactly matches frozen
+        v1, it is marked v1 and then migrated. If it exactly matches the current schema and holds no rows (the
+        DDL ran but the stamp was lost), it is stamped. Anything else fails closed. Returns the version now."""
+        existing = _schema_signature(self.conn)
+        if not existing:
             self.conn.executescript(DDL)
             self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self.conn.commit()
-            return
-        if version == 1:
-            self._migrate_v1_to_v2()
+            return SCHEMA_VERSION
+        if existing == _reference_signature(load_frozen_schema(1)):
+            self.conn.execute("PRAGMA user_version = 1")
+            self.conn.commit()
+            return 1
+        if existing == _reference_signature(DDL):
+            tables = [n for (kind, n) in existing if kind == "table"]
+            if all(self.conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0] == 0 for t in tables):
+                self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                self.conn.commit()
+                return SCHEMA_VERSION
+            raise SchemaError("database has the current tables and data but no schema version; refusing to guess. "
+                              "Restore the version stamp from a backup or export and re-import the data")
+        names = sorted(n for (_, n) in existing)
+        raise SchemaError(f"database has no schema version but already contains objects {names[:8]} that match no "
+                          "known schema; refusing to open it (fail closed)")
 
     def _migrate_v1_to_v2(self) -> None:
         """Rebuild action_requests with the v2 columns (SQLite cannot add a NOT NULL column without a default).

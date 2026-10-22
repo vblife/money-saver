@@ -1,4 +1,4 @@
--- Frozen schema v1 (core/store.py at 87b31c9). Used only to test the v1 -> v2 migration.
+-- Frozen schema v1 (core/store.py at 87b31c9). Never edit: used to recognise and migrate v1 databases.
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles',
   gmail_accounts TEXT NOT NULL DEFAULT '[]', household_emails TEXT NOT NULL DEFAULT '[]',
