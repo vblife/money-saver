@@ -91,6 +91,11 @@ class EvidenceStore:
             raise
         return fd
 
+    def open_inbox_file(self, src_path: str) -> tuple[int, str]:
+        """Open a user upload from the inbox with the same D14 checks (used for card statements). Returns (fd, real)."""
+        real, checked = self._check(src_path)
+        return self._open_checked(real, checked), real
+
     def _entity_dir(self, related_ref: str, evidence_id: str) -> str:
         entity = _SAFE.sub("_", related_ref.split("_", 1)[0] or "misc")
         return os.path.join(self.root, entity, _SAFE.sub("_", related_ref), evidence_id)

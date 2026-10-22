@@ -34,9 +34,27 @@ CONF_RX = re.compile(r"(?i:confirmation (?:code|number|#)|record locator|confirm
 LAST4_RX = re.compile(r"(?:ending(?: in)?|ends in|last 4[: ]*)\s*(?P<v>\d{4})\b", re.I)
 TRIAL_DAYS_RX = re.compile(r"\b(?P<v>\d{1,2})[- ]day (?:free )?trial|\b(?P<v2>\d{1,2}) days (?:free|for free)", re.I)
 
+_MONEY = r"(?:\$|USD\s?)\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?"
+# FR-1-16: "price is changing from $15.49 to $17.99", "your price will increase to $17.99/month"
+PRICE_FROM_TO_RX = re.compile(
+    rf"(?:price|rate|plan|membership|subscription)[^$\n]{{0,60}}?(?:from|was)\s*(?P<old>{_MONEY})[^$\n]{{0,30}}?\bto\s*(?P<new>{_MONEY})", re.I)
+PRICE_TO_RX = re.compile(
+    rf"(?:price|rate|plan|membership|subscription|cost)[^$\n]{{0,60}}?(?:increas\w*|chang\w*|go(?:es|ing)? up|ris\w*|be)\s+to\s*(?P<new>{_MONEY})", re.I)
+# FR-1-5: usage hints. These are only signals (shown as "inferred"), never proof of use or non-use.
+USAGE_RULES = [
+    ("likely_unused", re.compile(r"we miss you|miss you already|come back|haven'?t seen you|it'?s been a while|"
+                                 r"we haven'?t seen|still there\?|account (?:has been|is) inactive|win you back|"
+                                 r"welcome back offer", re.I)),
+    ("active", re.compile(r"new sign-?in|new log-?in|signed in (?:on|from)|you (?:watched|listened to|streamed|played)|"
+                          r"your (?:weekly|monthly) (?:summary|recap|activity|report)|activity (?:summary|recap)|"
+                          r"year in review|\bwrapped\b|recently (?:watched|played)", re.I)),
+]
+USAGE_VALUES = ("active", "likely_unused")
+
 FIELD_TYPES = {"amount_cents": int, "currency": str, "period": str, "date": str, "order_number": str,
                "confirmation_code": str, "last4": str, "trial_days": int, "trial_end_date": str,
-               "next_charge_date": str, "merchant": str}
+               "next_charge_date": str, "merchant": str, "price_old_cents": int, "price_new_cents": int,
+               "usage_signal": str}
 PERIODS = ("weekly", "monthly", "quarterly", "semiannual", "annual", "unknown")
 
 
@@ -135,6 +153,19 @@ def extract(text: str, source_message_id: str | None = None, ref_date: date | No
     m = TRIAL_DAYS_RX.search(text)
     if m:
         out["trial_days"] = _field(int(m.group("v") or m.group("v2")), m.group(0), source_message_id)
+    m = PRICE_FROM_TO_RX.search(text)
+    if m:
+        out["price_old_cents"] = _field(find_amounts(m.group("old"))[0][0], m.group(0), source_message_id)
+        out["price_new_cents"] = _field(find_amounts(m.group("new"))[0][0], m.group(0), source_message_id)
+    else:
+        m = PRICE_TO_RX.search(text)
+        if m:
+            out["price_new_cents"] = _field(find_amounts(m.group("new"))[0][0], m.group(0), source_message_id)
+    for signal, rx in USAGE_RULES:
+        m = rx.search(text)
+        if m:
+            out["usage_signal"] = _field(signal, m.group(0), source_message_id)
+            break
     return out
 
 
@@ -171,7 +202,7 @@ def validate_llm_extraction(payload: Any, text: str, source_message_id: str | No
         if not isinstance(value, FIELD_TYPES[name]) or isinstance(value, bool):
             dropped.append(f"{name}: wrong type")
             continue
-        if name == "amount_cents" and value not in [a[0] for a in find_amounts(span)]:
+        if name in ("amount_cents", "price_old_cents", "price_new_cents") and value not in [a[0] for a in find_amounts(span)]:
             dropped.append(f"{name}: value does not match evidence_span")
             continue
         if name in ("date", "trial_end_date", "next_charge_date"):
@@ -183,6 +214,9 @@ def validate_llm_extraction(payload: Any, text: str, source_message_id: str | No
             if d not in [x[0] for x in find_dates(span, d)]:
                 dropped.append(f"{name}: value does not match evidence_span")
                 continue
+        if name == "usage_signal" and value not in USAGE_VALUES:
+            dropped.append(f"{name}: unknown usage signal")
+            continue
         if name == "period" and value not in PERIODS:
             dropped.append(f"{name}: unknown period")
             continue

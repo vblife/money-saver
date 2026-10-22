@@ -5,6 +5,7 @@
   "queries": [
     {"id": "subscriptions", "modules": ["subscriptions"], "q": "subject:(receipt OR invoice OR \"your subscription\" OR renewal OR \"free trial\" OR \"trial ends\" OR membership OR \"auto-renew\")"},
     {"id": "aggregators", "modules": ["subscriptions"], "q": "from:(apple.com OR google.com OR paypal.com OR stripe.com) subject:(receipt OR invoice OR subscription OR payment)"},
+    {"id": "usage_signals", "modules": ["subscriptions"], "q": "subject:(\"we miss you\" OR \"come back\" OR \"new sign-in\" OR \"new login\" OR \"weekly summary\" OR \"year in review\" OR \"price change\" OR \"price increase\" OR \"price is changing\")"},
     {"id": "orders", "modules": ["post_purchase"], "q": "subject:(\"order confirmation\" OR \"your order\" OR \"order #\" OR shipped OR \"out for delivery\" OR delivered OR delayed)"},
     {"id": "refunds", "modules": ["recovery", "post_purchase"], "q": "subject:(refund OR \"return received\" OR \"credit issued\" OR \"price adjustment\")"},
     {"id": "travel", "modules": ["travel"], "q": "subject:(itinerary OR \"flight confirmation\" OR \"reservation confirmation\" OR \"booking confirmation\" OR \"schedule change\" OR \"flight delay\" OR \"flight cancellation\")"},
