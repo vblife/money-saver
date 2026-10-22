@@ -149,3 +149,37 @@ def test_ids_and_digests_never_trip_the_privacy_scanner(store):
     assert privacy.find_forbidden(digest)
     store.insert("evidence", {"kind": "form_receipt", "path_or_ref": "ref", "sha256": digest,
                               "captured_at": "2026-10-01T00:00:00Z"})
+
+
+# --- regression: only our own generated id/hash formats skip the scan (re-review item 1) ------------
+@_pytest.mark.parametrize("table,row", [
+    ("savings_ledger", {"module": "subscriptions", "saving_type": "one_time", "description": "x", "amount_cents": 1,
+                        "status": "pending", "source_ref": "s", "dedupe_key": "k", "occurred_at": "2026-10-01",
+                        "merchant_id": "4111111111111111"}),
+    ("source_messages", {"gmail_account": "a@example.com", "message_id": "4111 1111 1111 1111", "category": "other",
+                         "confidence": 1}),
+    ("source_messages", {"gmail_account": "a@example.com", "message_id": "m", "thread_id": "4111111111111111",
+                         "category": "other", "confidence": 1}),
+    ("subscriptions", {"display_name": "X", "merchant_id": "ssn 123-45-6789"}),
+    ("evidence", {"kind": "form_receipt", "path_or_ref": "r", "captured_at": "2026-10-01T00:00:00Z",
+                  "sha256": "card 4111111111111111"}),
+    ("subscriptions", {"id": "4111111111111111", "display_name": "X"}),
+    ("charges", {"date": "2026-10-01", "amount_cents": 100, "source": "gmail", "source_ref": "r",
+                 "subscription_id": "4111-1111-1111-1111"}),
+    ("subscriptions", {"display_name": "X", "merchant_id": 4111111111111111}),
+])
+def test_id_columns_with_free_text_are_scanned(store, table, row):
+    with _pytest.raises(ForbiddenDataError):
+        store.insert(table, row)
+
+
+def test_exemption_matches_exact_generated_formats_only():
+    from core.store import is_exempt_generated_value as ex
+    assert ex("id", "ar_abcdefghijklmnop") and ex("action_request_id", "ar_abcdefghijklmnop")
+    assert ex("sha256", "4111111111111111" + "ab" * 24)
+    assert ex("confirmation_code", "QWERTY")
+    assert not ex("merchant_id", "netflix")              # registry ids are scanned (harmless for real names)
+    assert not ex("id", "ar_abcdefghijklmnop1")
+    assert not ex("sha256", "4111111111111111")
+    assert not ex("message_id", "4111111111111111")
+    assert not ex("summary", "ar_abcdefghijklmnop")

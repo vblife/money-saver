@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from typing import Any, Iterable
 
@@ -15,8 +16,22 @@ from . import privacy
 from .util import default_db_path, new_id, to_iso, utcnow
 
 SCHEMA_VERSION = 1
-# Generated identifiers and digests: random hex can look like a card number, so they are not scanned.
-UNSCANNED_COLUMNS = {"id", "sha256", "confirmation_sha256", "confirmation_code"}
+# Values we generate ourselves skip the forbidden-data scan, but only when they match our exact formats
+# (random hex digests can contain a Luhn-valid digit run). Everything else, including any agent- or
+# email-supplied "*_id" value such as merchant_id or message_id, is scanned.
+GENERATED_ID_RE = re.compile(r"^[a-z]{2,4}_[a-z]{16}$")   # core.util.new_id
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+CONFIRMATION_CODE_RE = re.compile(r"^[A-Z]{6}$")
+EXEMPT_FORMATS = {"sha256": SHA256_RE, "confirmation_sha256": SHA256_RE, "confirmation_code": CONFIRMATION_CODE_RE}
+
+
+def is_exempt_generated_value(column: str, value: str) -> bool:
+    rx = EXEMPT_FORMATS.get(column)
+    if rx is not None:
+        return bool(rx.match(value))
+    if column == "id" or column.endswith("_id"):
+        return bool(GENERATED_ID_RE.match(value))
+    return False
 
 # table -> (id prefix, JSON columns)
 TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -229,8 +244,11 @@ class Store:
                 privacy.assert_no_forbidden_secrets(value, field=f"{table}.{key}")
             elif isinstance(value, bool):
                 value = int(value)
-            elif isinstance(value, str) and key not in UNSCANNED_COLUMNS and not key.endswith("_id"):
-                privacy.assert_no_forbidden_secrets(value, field=f"{table}.{key}")
+            elif isinstance(value, str):
+                if not is_exempt_generated_value(key, value):
+                    privacy.assert_no_forbidden_secrets(value, field=f"{table}.{key}")
+            elif isinstance(value, int):
+                privacy.assert_no_forbidden_secrets(str(value), field=f"{table}.{key}")
             out[key] = value
         return out
 
