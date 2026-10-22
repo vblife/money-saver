@@ -358,7 +358,7 @@ class ActionGate:
 
     @staticmethod
     def _require_bound(req: dict[str, Any]) -> None:
-        # A request without a code and text digest (e.g. a row from before schema v2) can never be approved;
+        # A request without a code and text digest (e.g. a row edited by hand) can never be approved;
         # otherwise ``None == None`` would let an unbound digest through.
         if not req.get("confirmation_code") or not req.get("confirmation_sha256") or not req.get("confirmation_text"):
             raise NotExplicitConfirmationError(

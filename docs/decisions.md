@@ -113,18 +113,20 @@ Charles before any live cancellation.
   `st_nlink == 1` and the same device and inode that were checked, and on Linux its `/proc/self/fd` path must be
   inside the inbox. The copy is read from that descriptor (never by path again) into a new `0600` file, and is
   hashed while copying.
-- **D15 Schema versions and migrations.** `PRAGMA user_version` holds the schema version (now 2). v1 is the schema at
-  87b31c9 and is frozen in `core/schemas/v1.sql`. The v1 → v2 migration rebuilds `action_requests` (adding
-  `executor`, the confirmation code/text/digest, `approval_source` and `execute_by`) in one transaction with
-  foreign keys checked afterwards. It rolls back completely on any error. It fails closed: v1 requests that were
-  still `pending_user` or `approved` were never bound to a confirmation text, so they become `expired` with a history
-  note and must be requested again. Terminal rows are kept. A request without a bound code and text can never be
-  approved. A database with a newer version than the code is refused. Every future schema change must bump
-  `SCHEMA_VERSION` and add a migration step with a test that starts from the previous frozen schema.
-  A file at `user_version` 0 is only treated as new when it has no tables. If its schema exactly matches frozen v1
-  (`core/schemas/v1.sql`), it is marked v1 and migrated as above. If it exactly matches the current schema and every
-  table is empty (the DDL ran but the stamp was lost), it is stamped. Anything else (current tables with data,
-  partial or extra tables, extra columns, another app's file) raises `SchemaError` and the file is left unchanged.
+- **D15 Schema defined directly, no migrations (Charles, 2026-10-22).** In Charles's words: "Don't worry about
+  migration, this is still in dev and no one is consuming it, just update database schema directly in all PRs."
+  `core/store.py` only creates the current schema (`DDL`, all `CREATE TABLE/INDEX IF NOT EXISTS`) when it opens a
+  file. There is no `PRAGMA user_version` stamping, no schema version number, no v1 → v2 migration, and no
+  detection of unversioned files. This replaces the earlier versioned design (frozen v1 schema, fail-closed v1 → v2
+  rebuild of `action_requests`, refusing newer or unrecognized files), which was removed together with its tests.
+  - A schema change edits `DDL` directly in the PR that needs it. It is not a migration, needs no migration code or
+    version bump, and is not flagged `[RISKY: DB migration]`.
+  - `CREATE TABLE IF NOT EXISTS` does not alter an existing table, so a dev database made by older code can be
+    missing new columns. Delete it (default `msb.db` under the bot's data directory) and let the store rebuild it.
+  - Gate safety does not depend on migrations: a request without a bound confirmation code and text can never be
+    approved (`tests/test_action_gate.py`).
+  - This holds while money-saver is in development with no consumers. Migrations come back only by a new decision
+    from Charles.
 
 ## Engineering decisions (M1a: subscription inventory)
 - **D16 Inventory source and identity.** `modules/subscriptions.py` builds `subscriptions` and `charges` only from

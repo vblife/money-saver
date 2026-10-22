@@ -9,6 +9,7 @@ from core.action_gate import (ALLOWED_EXECUTORS, ActionGate, ActionNotAllowedErr
 from core.call_policy import build_call_script, save_call_identity
 from core.evidence import EvidenceStore
 from core.privacy import ForbiddenDataError
+from core.store import Store
 from executors.base import GuardedExecutor
 
 DRAFT = "Hello, I am an AI assistant calling on behalf of Alex to cancel the subscription."
@@ -667,3 +668,20 @@ def test_batch_codes_must_be_one_block_at_an_end():
     assert not is_explicit_confirmation("AAAAAA confirm BBBBBB", codes)
     assert not is_explicit_confirmation("全部 AAAAAA 确认 BBBBBB", codes)
     assert not is_explicit_confirmation("confirm AAAAAA all BBBBBB", codes)
+
+
+def test_pending_row_without_confirmation_binding_cannot_be_approved(tmp_path):
+    """Even if an unbound row is pending (e.g. edited by hand), None == None must not approve it."""
+    store = Store(str(tmp_path / "s.db"))
+    gate = ActionGate(store)
+    req = gate.create(action_type="cancel_subscription", target_ref="sub_x", summary="Cancel X", plan_steps=["a"])
+    store.conn.execute("UPDATE action_requests SET confirmation_code=NULL, confirmation_text=NULL,"
+                       " confirmation_sha256=NULL WHERE id=?", (req["id"],))
+    store.conn.commit()
+    for msg in ("confirm", "Confirm", "确认"):
+        with pytest.raises(Exception, match="no bound confirmation"):
+            gate.confirm(req["id"], msg, shown_text_sha256=None)
+        with pytest.raises(Exception, match="no bound confirmation"):
+            gate.confirm_batch([req["id"]], msg, shown_text_sha256=None)
+    assert gate.get(req["id"])["status"] == "pending_user"
+    store.close()

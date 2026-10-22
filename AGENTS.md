@@ -9,9 +9,12 @@ These rules apply to every coding agent (Grok Bot, Cursor, or any other) working
   - anything touching secrets or credentials;
   - deploy config (connector/launch config, routine schedules that run for real). Charles approved R1, R3, R4 and
     R10 on by default on 2026-10-22 (`routines/schedule.py`). New routines or changes to them still need approval;
-  - production data paths and DB schema migrations (e.g. `msb.db` under the bot's persistent directory);
+  - production data paths (e.g. `msb.db` under the bot's persistent directory);
   - anything that sends messages, spends money, or cancels services for real (email sending, Bland calls, browser
     playbooks that submit cancellations, claims, rebookings, or forms).
+- DB schema (Charles, 2026-10-22): money-saver is still in development and nothing consumes its data, so schema
+  changes are made directly in `core/store.py` (`DDL`) in the PR that needs them. They are not migrations: no
+  migration code, no version stamping, and no `[RISKY: DB migration]` flag (D15).
 - Keep each PR to one change. Do not mix unrelated edits.
 - Do not post GitHub comments or replies unless the repo owner explicitly asked for that exact comment.
 
