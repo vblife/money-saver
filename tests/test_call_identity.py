@@ -122,7 +122,7 @@ def test_update_settings_validates_call_identity(gate):
 
 
 def test_server_tools_use_the_saved_name(tmp_path):
-    app = App(str(tmp_path / "msb.db"), str(tmp_path / "ev"), str(tmp_path / "inbox"))
+    app = App(str(tmp_path / "msb.db"), str(tmp_path / "ev"), [str(tmp_path / "inbox")])
     try:
         with pytest.raises(CallPolicyError):
             app.call("set_call_identity", {"user_name": INJECTED[0]})

@@ -17,7 +17,7 @@ GATE_EXECUTING = {"start_action_run", "finish_action_run", "confirm_action_reque
 
 @pytest.fixture
 def app(tmp_path):
-    a = App(str(tmp_path / "msb.db"), str(tmp_path / "ev"), str(tmp_path / "inbox"))
+    a = App(str(tmp_path / "msb.db"), str(tmp_path / "ev"), [str(tmp_path / "inbox")])
     yield a
     a.store.close()
 

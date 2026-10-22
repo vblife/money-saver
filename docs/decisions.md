@@ -199,8 +199,18 @@ Charles before any live cancellation.
 - **D26 Statement intake.** `import_card_statement` reads only files in the upload inbox (the evidence inbox
   directories). It applies the D14 checks: no symlinks or hard links, re-verified through the open descriptor.
   Size cap is 10 MB. PDFs go through poppler `pdftotext -layout`, fed the verified bytes on stdin. CSVs use the
-  stdlib. Header aliases cover common exports. Purchases exported as negative amounts are detected by majority
-  sign, and payments, returns, and credits are dropped.
+  stdlib. Header aliases cover common exports. A CSV the stdlib cannot read (a field over 131,072 characters, a
+  malformed file) is a `StatementError` like any other parse error, so the D28 "upload was deleted" note applies.
+  The inbox directories must be a list or tuple of path strings. A bare string is refused (iterating it would allow
+  `/`, so any path), and so is the filesystem root.
+  - Payments and credits are found by descriptor (AUTOPAY, PAYMENT, PYMT, THANK YOU, REFUND, STATEMENT CREDIT, ...;
+    bare "credit" is not matched, because credit monitoring is a real subscription) or by a type column. They are
+    always dropped, whatever their sign.
+  - Sign convention of a single amount column, never by majority vote: a type column decides from its sale rows;
+    else the payment lines decide (negative payments: the usual convention; positive payments: purchases are
+    negative, unless every other line is positive too); else purchases are negative only if every line is.
+    Anything ambiguous keeps charges positive. (The majority rule turned three AUTOPAY payments into a $500/month
+    subscription and dropped the real purchase.)
 - **D27 What is kept (FR-0-8, PV-3).** A line is kept only if it is a positive charge and one of these holds:
   - it resolves to a registry merchant outside retail and food delivery;
   - its descriptor has subscription wording (subscription, membership, recurring, prime, ...);
@@ -208,13 +218,19 @@ Charles before any live cancellation.
   All other lines are discarded and never stored. A kept line stores only date, redacted descriptor, amount, and card
   last 4. Card numbers in a card column are cut to the last 4 digits. Limitation: an unknown merchant that appears
   once per statement is only caught when two or more months are uploaded, or through its wording.
+  Rent, HOA dues, property management, and mortgage lines with no registry merchant repeat like subscriptions, so
+  they are kept, but they are labelled "not a subscription" in the import result and in `list_subscriptions`
+  (`not_a_subscription`, `not_subscriptions`). They are left out of the totals and price-change reports, and get
+  confidence 0.3.
 - **D28 Original file.** The upload is deleted right after it is read, by default, even if parsing then fails, and
   the result or error says so. `keep_original: true` keeps it.
 - **D29 Linking.** PayPal/Apple/Google/Amazon descriptor prefixes set the billing channel. A charge links to the
   existing subscription with the same merchant and channel, preferring one with the same card ending. Otherwise a
   statement-only subscription is created (no account email; confidence 0.7, or 0.5 for an unknown merchant). A
   later Gmail receipt adopts that row instead of creating a duplicate. Statement charge references are deterministic
-  letter-only digests, so re-importing the same statement adds nothing. No schema change.
+  letter-only digests, so re-importing the same statement adds nothing. Each import is one transaction
+  (`Store.transaction()`): if any line fails (for example `ForbiddenDataError`), nothing from that statement is
+  stored and the error says "nothing was imported". No schema change.
 
 ## Decisions by Charles (2026-10-22)
 - **D30 Call honesty (resolves Q3): disclose up front.** Charles revised this decision on 2026-10-22, in his own
