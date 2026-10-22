@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-import uuid
+import secrets
+import string
 from datetime import date, datetime, timezone
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,7 +26,8 @@ def default_evidence_dir() -> str:
 
 
 def new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex[:16]}"
+    # Letters only: ids never contain digit runs that could look like card numbers to the privacy scanner.
+    return f"{prefix}_{''.join(secrets.choice(string.ascii_lowercase) for _ in range(16))}"
 
 
 def utcnow() -> datetime:

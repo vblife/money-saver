@@ -81,3 +81,71 @@ def test_find_rejects_injection(store):
         store.find("subscriptions", {"1=1; DROP TABLE x; --": 1})
     with pytest.raises(ValueError):
         store.find("nope")
+
+
+# --- regression: JSON columns are scanned for forbidden data (review of PR #1, blocking 3) ---------
+import pytest as _pytest  # noqa: E402
+
+from core.store import TABLES as _TABLES  # noqa: E402
+
+CARD = "4111 1111 1111 1111"
+JSON_CASES = [
+    ("action_requests", "plan_steps", ["type password: hunter2"]),
+    ("action_requests", "constraints", {"card": CARD}),
+    ("action_requests", "constraints", {"nested": {"deeper": [{"x": CARD}]}}),
+    ("action_requests", "constraints", {"password": "hunter2"}),
+    ("action_requests", "constraints", {CARD: "key holds the card"}),
+    ("action_requests", "constraints", {"card_int": 4111111111111111}),
+    ("action_requests", "disclosed_fields", [{"field": "ssn", "value_masked": "123-45-6789"}]),
+    ("action_requests", "history", [{"note": "user said cvv: 123"}]),
+    ("action_runs", "log", [{"typed": CARD}]),
+    ("source_messages", "extracted", {"snippet": "SSN 123-45-6789"}),
+    ("bookings", "travelers", ["Alex", "pin: 4321"]),
+    ("users", "thresholds", {"x": CARD}),
+]
+
+
+@_pytest.mark.parametrize("table,column,value", JSON_CASES)
+def test_json_columns_reject_forbidden_data(store, table, column, value):
+    assert column in _TABLES[table][1]
+    row = {
+        "action_requests": {"action_type": "cancel_subscription", "target_ref": "s", "summary": "x", "expires_at": "2099-01-01T00:00:00Z"},
+        "action_runs": {"action_request_id": "ar_x", "started_at": "2026-01-01T00:00:00Z", "executor": "browser"},
+        "source_messages": {"gmail_account": "a@example.com", "message_id": "m", "category": "other", "confidence": 1},
+        "bookings": {"kind": "flight"},
+        "users": {},
+    }[table]
+    with _pytest.raises(ForbiddenDataError):
+        store.insert(table, {**row, column: value})
+    if table == "action_requests":
+        ok = store.insert(table, row)
+        with _pytest.raises(ForbiddenDataError):
+            store.update(table, ok["id"], {column: value})
+
+
+def test_every_json_column_is_scanned(store):
+    # Guard against new JSON columns being added without coverage: encode each with a card number.
+    for table, (_, cols) in _TABLES.items():
+        for col in cols:
+            with _pytest.raises(ForbiddenDataError):
+                store._encode(table, {col: [{"v": CARD}]})
+
+
+def test_json_columns_allow_masked_values(store):
+    row = store.insert("action_requests", {"action_type": "cancel_subscription", "target_ref": "s", "summary": "x",
+                                           "expires_at": "2099-01-01T00:00:00Z",
+                                           "disclosed_fields": [{"field": "account_last4", "value_masked": "****4821"}],
+                                           "constraints": {"max_monthly_cents": 5500, "no_contract": True}})
+    assert row["constraints"]["max_monthly_cents"] == 5500
+
+
+def test_ids_and_digests_never_trip_the_privacy_scanner(store):
+    from core import privacy
+    from core.util import new_id
+    for _ in range(2000):
+        assert not any(ch.isdigit() for ch in new_id("ar")[3:])
+    # A digest that happens to contain a Luhn-valid 16-digit run must still be storable.
+    digest = "4111111111111111" + "ab" * 24
+    assert privacy.find_forbidden(digest)
+    store.insert("evidence", {"kind": "form_receipt", "path_or_ref": "ref", "sha256": digest,
+                              "captured_at": "2026-10-01T00:00:00Z"})

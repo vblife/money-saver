@@ -15,6 +15,8 @@ from . import privacy
 from .util import default_db_path, new_id, to_iso, utcnow
 
 SCHEMA_VERSION = 1
+# Generated identifiers and digests: random hex can look like a card number, so they are not scanned.
+UNSCANNED_COLUMNS = {"id", "sha256", "confirmation_sha256"}
 
 # table -> (id prefix, JSON columns)
 TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -220,10 +222,12 @@ class Store:
         out = {}
         for key, value in row.items():
             if key in json_cols:
+                _scan_json(value, f"{table}.{key}")
                 value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                privacy.assert_no_forbidden_secrets(value, field=f"{table}.{key}")
             elif isinstance(value, bool):
                 value = int(value)
-            elif isinstance(value, str):
+            elif isinstance(value, str) and key not in UNSCANNED_COLUMNS and not key.endswith("_id"):
                 privacy.assert_no_forbidden_secrets(value, field=f"{table}.{key}")
             out[key] = value
         return out
@@ -319,6 +323,25 @@ class Store:
                 counts[table] = self.conn.execute(f"DELETE FROM {table}").rowcount
             self.conn.execute("PRAGMA foreign_keys = ON")
         return counts
+
+
+def _scan_json(value: Any, field: str) -> None:
+    """Spec 8.3: check every key and value of a JSON column, recursively, for forbidden data."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            privacy.assert_no_forbidden_secrets(str(k), field=field)
+            if isinstance(v, str) and isinstance(k, str):
+                privacy.assert_no_forbidden_secrets(f"{k}: {v}", field=field)  # e.g. {"password": "hunter2"}
+            _scan_json(v, field)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _scan_json(v, field)
+    elif isinstance(value, bool) or value is None:
+        return
+    elif isinstance(value, (str, int, float)):
+        privacy.assert_no_forbidden_secrets(str(value), field=field)
+    else:
+        raise TypeError(f"{field}: unsupported JSON value {type(value).__name__}")
 
 
 USER_FIELDS = ("timezone", "gmail_accounts", "household_emails", "home_zip", "states_lived", "cards_held",
