@@ -299,6 +299,7 @@ class ActionGate:
         if req["status"] != "pending_user":
             raise InvalidTransitionError(f"action request {request_id} is {req['status']}, not pending_user")
         self._check_live(req)
+        self._require_bound(req)
         code = req.get("confirmation_code")
         if not is_explicit_confirmation(user_message, [code] if code else []):
             raise NotExplicitConfirmationError(
@@ -312,6 +313,14 @@ class ActionGate:
         return self._transition(req, "approved", "confirmed by user", approved_at=self._now(),
                                 approved_by_message=user_message.strip(), approval_source=source,
                                 execute_by=self._execute_by(req))
+
+    @staticmethod
+    def _require_bound(req: dict[str, Any]) -> None:
+        # A request without a code and text digest (e.g. a row from before schema v2) can never be approved;
+        # otherwise ``None == None`` would let an unbound digest through.
+        if not req.get("confirmation_code") or not req.get("confirmation_sha256") or not req.get("confirmation_text"):
+            raise NotExplicitConfirmationError(
+                f"action request {req['id']} has no bound confirmation text; amend it or create a new request")
 
     def batch_text(self, request_ids: list[str], lang: str = "en") -> str:
         return notifier.format_batch([self.get(rid) for rid in request_ids], lang)
@@ -327,6 +336,7 @@ class ActionGate:
             if req["status"] != "pending_user":
                 raise InvalidTransitionError(f"action request {req['id']} is {req['status']}, not pending_user")
             self._check_live(req)
+            self._require_bound(req)
         codes = [r.get("confirmation_code") or "" for r in reqs]
         if not is_explicit_confirmation(user_message, codes):
             raise NotExplicitConfirmationError("the reply is not an explicit confirmation; ask again")
