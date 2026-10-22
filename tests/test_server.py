@@ -161,6 +161,28 @@ def test_stdio_subscription_inventory(tmp_path):
         c.close()
 
 
+def test_stdio_card_statement_import(tmp_path):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    f = inbox / "stmt.csv"
+    f.write_text("Date,Description,Amount\n2026-09-03,SPOTIFY USA,11.99\n2026-10-03,SPOTIFY USA,11.99\n"
+                 "2026-10-04,GROCERY OUTLET,54.10\n")
+    outside = tmp_path / "elsewhere.csv"
+    outside.write_text("Date,Description,Amount\n2026-10-03,SPOTIFY USA,11.99\n")
+    c = Client(tmp_path)
+    try:
+        c.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        out = c.tool("import_card_statement", path=str(f))["structuredContent"]
+        assert out["kept"] == 2 and out["dropped"] == 1 and out["original_deleted"] and not f.exists()
+        bad = c.tool("import_card_statement", path=str(outside))
+        assert bad["isError"] and outside.exists()
+        listing = c.tool("list_subscriptions")["structuredContent"]
+        assert [s["display_name"] for s in listing["subscriptions"]] == ["Spotify"]
+        assert "GROCERY" not in json.dumps(listing)
+    finally:
+        c.close()
+
+
 def test_stdio_trial_flow_needs_confirmation(tmp_path):
     from datetime import datetime, timedelta, timezone
     end = (datetime.now(timezone.utc) + timedelta(days=10)).date()
@@ -195,3 +217,33 @@ def test_stdio_trial_flow_needs_confirmation(tmp_path):
         assert exp == {"expired": [], "messages": []}
     finally:
         c.close()
+
+
+def test_m1b_and_m1c_tools_coexist(tmp_path):
+    """After merging main (M1b) into M1c: both feature sets are listed, documented, and work together."""
+    import os
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    f = inbox / "stmt.csv"
+    f.write_text("Date,Description,Amount\n2026-09-03,SPOTIFY USA,11.99\n2026-10-03,SPOTIFY USA,11.99\n")
+    c = Client(tmp_path)
+    try:
+        c.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        names = {t["name"] for t in c.rpc("tools/list")["result"]["tools"]}
+        both = {"import_card_statement", "refresh_after_scan", "detect_duplicates", "dispatch_reminders",
+                "run_trial_guard", "respond_to_trial_reminder", "preauthorize_trial_cancel", "stop_trial_auto_cancel",
+                "list_routines", "set_routine_enabled", "set_call_identity", "build_call_script"}
+        assert both <= names
+        assert c.tool("import_card_statement", path=str(f))["structuredContent"]["kept"] == 2
+        # the R1 refresh keeps the statement-only subscription and finds no duplicate in it
+        c.tool("refresh_after_scan")
+        listing = c.tool("list_subscriptions")["structuredContent"]["subscriptions"]
+        assert [s["display_name"] for s in listing] == ["Spotify"]
+        assert c.tool("detect_duplicates")["structuredContent"]["text"] == "No duplicate subscriptions found."
+    finally:
+        c.close()
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    skill = open(os.path.join(root, "skills", "money-saver-core", "SKILL.md"), encoding="utf-8").read()
+    for tool in ("import_card_statement", "refresh_after_scan", "stop_trial_auto_cancel", "build_call_script",
+                 "set_call_identity", "list_routines"):
+        assert f"`{tool}`" in skill, tool

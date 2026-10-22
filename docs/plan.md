@@ -45,7 +45,7 @@ Charles approved enabling R1, R3, R4, and R10 by default on 2026-10-22 (M1b, D31
    confidence (FR-1-7); `Reminder` rows at T-2 and T-1 at 09:00 local (FR-1-8); pre-authorized auto-cancel with the
    2-hour revoke window (FR-1-9, already supported by the gate); routines R1, R3, R4, R10 as code, enabled by default
    (`routines/schedule.py`, approved by Charles 2026-10-22, D31).
-3. **M1c Card statement upload:** PDF (`pdftotext`) and CSV parsing, keep only likely recurring lines, delete the
+3. **M1c Card statement upload** (done in `modules/statements.py`; see D26-D29): PDF (`pdftotext`) and CSV parsing, keep only likely recurring lines, delete the
    original by default (FR-0-8, PV-3).
 4. **M1d Cancellation execution:** browser playbooks for the top 30 merchants (FR-1-10), Bland cancel call script under the
    Q3 honesty policy (FR-1-11; Q3 resolved 2026-10-22, D30: disclose up front that the caller is an AI (locked on),

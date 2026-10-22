@@ -27,6 +27,7 @@ from core.merchant_resolver import MerchantResolver  # noqa: E402
 from core.privacy import ForbiddenDataError  # noqa: E402
 from core.store import USER_FIELDS, Store  # noqa: E402
 from modules import duplicates as dup_mod, subscriptions as subs_mod  # noqa: E402
+from modules.statements import StatementError, StatementImporter  # noqa: E402
 from modules.trials import CHOICES as TRIAL_CHOICES, Trials  # noqa: E402
 from routines import r1_daily_scan, r3_reminder_dispatch, r4_trial_guard, r10_expiry  # noqa: E402
 from routines import schedule as routine_schedule  # noqa: E402
@@ -111,6 +112,10 @@ TOOLS = [
     {"name": "stop_trial_auto_cancel", "title": "Undo a trial cancellation",
      "description": "The undo ('reply stop'): revoke open cancel requests for this subscription that have not started. Pass the user's reply verbatim.",
      "inputSchema": O({"subscription_id": S, "user_message": S}, ["subscription_id", "user_message"])},
+    {"name": "import_card_statement", "title": "Import a card statement (PDF/CSV)",
+     "description": "FR-0-8 / US-1-3: read a statement the user put in the upload inbox. Only likely recurring lines are kept (date, descriptor, amount, card last 4); everything else is discarded. The original file is deleted afterwards unless keep_original is true (PV-3). Never ask the user to link a bank account.",
+     "inputSchema": O({"path": S, "keep_original": B, "year": {"type": "integer", "minimum": 2000, "maximum": 2100},
+                       "card_last4": {"type": "string", "pattern": "^[0-9]{4}$"}}, ["path"])},
     {"name": "create_action_request", "title": "Create action request",
      "description": "REQUIRED before any consequential action (cancel, call, claim, email, rebook, form with personal data, accepting terms). Lists exact steps, the executor channel, disclosed fields (must be in approved_pii_fields), risks, and the draft/script. 'purchase' is disabled. A bland_call script must come from build_call_script, with the constraints it returns (the user's saved name); anything else is rejected (D30). Show the returned confirmation_text to the user verbatim; it contains a confirmation code the user replies with.",
      "inputSchema": O({"action_type": {"type": "string", "enum": list(ACTION_TYPES)}, "target_ref": S, "summary": S,
@@ -279,6 +284,9 @@ class App:
                                                    lang=a.get("lang", "en"),
                                                    account_holder_name=constraints.get("account_holder_name"))
             return {"draft_content": script, "constraints": constraints}
+        if name == "import_card_statement":
+            imp = StatementImporter(st, self.resolver, self.evidence.allowed_dirs, self.evidence.root)
+            return imp.import_file(a["path"], bool(a.get("keep_original")), a.get("year"), a.get("card_last4"))
         if name == "create_action_request":
             from core.util import parse_iso
             for k in ("expires_at", "execute_not_before"):
@@ -374,7 +382,7 @@ class Server:
                 raise KeyError(f"unknown tool: {name}")
             try:
                 r = self.app.call(name, p.get("arguments"))
-            except (GateError, LedgerError, ForbiddenDataError, EvidencePathError, FileNotFoundError, ValueError, TypeError, KeyError) as e:
+            except (GateError, LedgerError, ForbiddenDataError, EvidencePathError, StatementError, FileNotFoundError, ValueError, TypeError, KeyError) as e:
                 return {"content": [{"type": "text", "text": f"Error: {type(e).__name__}: {e}"}], "isError": True}
             return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False)}], "structuredContent": r}
         raise NotImplementedError(meth)
