@@ -521,3 +521,91 @@ def test_timeline_lists_requests_with_runs(gate, store):
     tl = gate.timeline()
     assert len(tl) == 2
     assert {t["request"]["id"]: (t["run"] or {}).get("outcome") for t in tl}[r1["id"]] == "success"
+
+
+# --- regression: bounded TTLs and dates, clean errors instead of OverflowError (re-review 2 and 3) ----
+from datetime import datetime, timezone  # noqa: E402
+
+
+@pytest.mark.parametrize("hours", [100000, 1e9, 72.01, 0, -1, float("inf"), float("nan"), "24", True, None])
+def test_approval_ttl_setting_is_validated(store, hours):
+    with pytest.raises(ValueError):
+        store.update_user({"thresholds": {"approval_ttl_hours": hours}})
+
+
+def test_unknown_or_bad_thresholds_rejected_and_others_kept(store):
+    with pytest.raises(ValueError):
+        store.update_user({"thresholds": {"approval_ttl_days": 1}})
+    with pytest.raises(ValueError):
+        store.update_user({"thresholds": "lots"})
+    store.update_user({"thresholds": {"approval_ttl_hours": 72}})
+    t = store.get_user()["thresholds"]
+    assert t["approval_ttl_hours"] == 72 and t["price_drop_min_cents"] == 500  # merged, not replaced
+
+
+def test_forged_huge_ttl_in_db_is_capped(store, clock):
+    store.update_user({"approved_pii_fields": []})
+    user = store.get_user()
+    store.update("users", user["id"], {"thresholds": {"approval_ttl_hours": 1e9}})
+    g = ActionGate(store, now_fn=clock)
+    assert g.approval_ttl == timedelta(hours=72)
+    req = ok(g, make(g))  # no OverflowError
+    assert req["execute_by"] == "2026-10-22T20:00:00Z"
+    clock.advance(hours=72, seconds=1)
+    with pytest.raises(NotApprovedError):
+        g.begin_execution(req["id"], "browser")
+
+
+@pytest.mark.parametrize("bad", [-5, "abc", True])
+def test_forged_invalid_ttl_falls_back_to_default(store, clock, bad):
+    store.update("users", store.get_user()["id"], {"thresholds": {"approval_ttl_hours": bad}})
+    assert ActionGate(store, now_fn=clock).approval_ttl == timedelta(hours=24)
+
+
+@pytest.mark.parametrize("ttl", [timedelta(0), timedelta(hours=73), timedelta(days=-1)])
+def test_constructor_ttl_bounds(store, clock, ttl):
+    with pytest.raises(ValueError):
+        ActionGate(store, now_fn=clock, approval_ttl=ttl)
+
+
+def test_pending_expiry_is_capped_at_72_hours(gate, clock):
+    with pytest.raises(GateError):
+        make(gate, expires_at=datetime(9999, 1, 1, tzinfo=timezone.utc))
+    with pytest.raises(GateError):
+        make(gate, expires_at=clock.now + timedelta(hours=72, seconds=1))
+    assert make(gate, expires_at=clock.now + timedelta(hours=72))["expires_at"] == "2026-10-22T20:00:00Z"
+    assert make(gate, expires_at=clock.now + timedelta(hours=1))
+
+
+@pytest.mark.parametrize("nb", [datetime(9999, 12, 31, tzinfo=timezone.utc), datetime(2026, 12, 4, 20, 0, 1, tzinfo=timezone.utc),
+                                datetime(2026, 10, 18, tzinfo=timezone.utc)])
+def test_execute_not_before_range(gate, nb):
+    with pytest.raises(GateError):
+        make(gate, execute_not_before=nb)
+
+
+def test_naive_datetimes_rejected(gate):
+    with pytest.raises(GateError):
+        make(gate, expires_at=datetime(2026, 10, 20))
+
+
+def test_forged_far_future_dates_fail_closed_without_overflow(gate, store):
+    req = make(gate)
+    store.update("action_requests", req["id"], {"execute_not_before": "9999-12-31T00:00:00Z"})
+    with pytest.raises(GateError):  # clean GateError, not OverflowError
+        ok(gate, req)
+    req2 = ok(gate, make(gate, target_ref="s2"))
+    store.update("action_requests", req2["id"], {"execute_by": "9999-12-31T23:59:59Z"})
+    with pytest.raises(NotApprovedError):  # deadline beyond the cap is treated as lapsed
+        gate.begin_execution(req2["id"], "browser")
+    req3 = ok(gate, make(gate, target_ref="s3"))
+    store.update("action_requests", req3["id"], {"execute_by": "not-a-date"})
+    with pytest.raises(NotApprovedError):
+        gate.begin_execution(req3["id"], "browser")
+
+
+def test_preauth_within_45_days_works(gate, clock):
+    req = make(gate, execute_not_before=clock.now + timedelta(days=30))
+    ok(gate, req)
+    clock.advance(days=30)
+    assert gate.begin_execution(req["id"], "browser")

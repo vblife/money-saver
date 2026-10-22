@@ -106,6 +106,14 @@ def test_stdio_end_to_end(tmp_path):
                            changes={"disclosed_fields": [{"field": "ssn", "value_masked": "123-45-6789"}]}, reason="x")
         assert amend_bad["isError"]
 
+        # bounded settings and dates return clean tool errors (no JSON-RPC -32603)
+        for hours in (100000, 1e9, 0):
+            assert c.tool("update_settings", settings={"thresholds": {"approval_ttl_hours": hours}})["isError"]
+        for field in ("expires_at", "execute_not_before"):
+            far = c.tool("create_action_request", action_type="cancel_subscription", target_ref="s9", summary="x",
+                         plan_steps=["a"], **{field: "9999-12-31T00:00:00Z"})
+            assert far["isError"] and "GateError" in far["content"][0]["text"]
+
         tl = c.tool("audit_timeline")["structuredContent"]["timeline"]
         assert {t["request"]["id"]: t["request"]["status"] for t in tl}[rid] == "executed"
 

@@ -332,6 +332,9 @@ class Store:
                 last4 = str(card.get("last4", ""))
                 if last4 and (len(last4) != 4 or not last4.isdigit()):
                     raise ValueError("cards_held stores only the last 4 digits")
+        if "thresholds" in changes:
+            changes = {**changes, "thresholds": {**(user.get("thresholds") or {}),
+                                                 **validate_thresholds(changes["thresholds"])}}
         return self.update("users", user["id"], changes)
 
     def wipe_all(self) -> dict[str, int]:
@@ -373,6 +376,36 @@ DEFAULT_THRESHOLDS = {
     "travel_min_saving_cents": 2000,  # FR-5-4: $20
     "max_calls_per_day": 5,           # 7.3
 }
+# key -> (min exclusive?, min, max). approval_ttl_hours is capped at 72 h (D12): an approval may never outlive
+# the 72-hour window an unconfirmed request gets (spec 6.9).
+MAX_APPROVAL_TTL_HOURS = 72
+THRESHOLD_BOUNDS = {
+    "price_drop_min_cents": (False, 0, 10_000_000),
+    "price_drop_min_pct": (False, 0, 100),
+    "travel_min_saving_cents": (False, 0, 10_000_000),
+    "max_calls_per_day": (False, 0, 20),
+    "approval_ttl_hours": (True, 0, MAX_APPROVAL_TTL_HOURS),
+}
+
+
+def validate_thresholds(value: Any) -> dict[str, Any]:
+    """Reject unknown keys, non-numbers, NaN/inf, and out-of-range values (fail closed)."""
+    import math
+    if not isinstance(value, dict):
+        raise ValueError("thresholds must be an object")
+    out = {}
+    for key, v in value.items():
+        if key not in THRESHOLD_BOUNDS:
+            raise ValueError(f"unknown threshold: {key}")
+        exclusive, lo, hi = THRESHOLD_BOUNDS[key]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            raise ValueError(f"{key} must be a finite number")
+        if (v <= lo if exclusive else v < lo) or v > hi:
+            raise ValueError(f"{key} must be {'>' if exclusive else '>='} {lo} and <= {hi}")
+        out[key] = v
+    return out
+
+
 DEFAULT_NOTIFICATION_PREFS = {
     "quiet_hours": ["22:00", "08:00"],  # R3
     "weekly_digest": True,

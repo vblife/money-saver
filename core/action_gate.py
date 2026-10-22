@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from . import notifier, privacy
-from .store import Store
+from .store import MAX_APPROVAL_TTL_HOURS, Store
 from .util import new_id, parse_iso, to_iso, utcnow
 
 ACTION_TYPES = ("cancel_subscription", "negotiate_bill", "place_call", "submit_claim", "send_email",
@@ -49,8 +49,11 @@ ALLOWED_EXECUTORS = {
 NEEDS_DRAFT_BY_EXECUTOR = {"email": "email draft", "bland_call": "call script"}
 RUN_OUTCOMES = ("success", "partial", "failed", "needs_user")
 TERMINAL = {"rejected", "expired", "executed", "failed", "cancelled_by_user"}
-DEFAULT_TTL = timedelta(hours=72)            # 6.9: unconfirmed requests expire after 72 hours
+DEFAULT_TTL = timedelta(hours=72)            # 6.9: unconfirmed requests expire after 72 hours (also the maximum)
+MAX_PENDING_TTL = DEFAULT_TTL
 DEFAULT_APPROVAL_TTL = timedelta(hours=24)   # D12: an approval must be acted on within 24 hours
+MAX_APPROVAL_TTL = timedelta(hours=MAX_APPROVAL_TTL_HOURS)
+MAX_PREAUTH_WINDOW = timedelta(days=45)      # execute_not_before at most 45 days ahead (30-day trials + margin)
 AMENDABLE = {"summary", "plan_steps", "disclosed_fields", "constraints", "draft_content", "expected_saving_cents",
              "risk_notes", "executor"}
 TRANSITIONS = {
@@ -123,6 +126,11 @@ def _mentions_all_codes(message: str, codes: list[str]) -> bool:
     return all(re.search(rf"(?<![a-z0-9]){re.escape(c.lower())}(?![a-z0-9])", text) for c in codes)
 
 
+def _check_aware(dt: Any, name: str) -> None:
+    if not isinstance(dt, datetime) or dt.tzinfo is None:
+        raise GateError(f"{name} must be a timezone-aware datetime")
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -134,6 +142,8 @@ def new_confirmation_code() -> str:
 class ActionGate:
     def __init__(self, store: Store, now_fn: Callable[[], datetime] = utcnow,
                  approval_ttl: timedelta | None = None):
+        if approval_ttl is not None and not (timedelta(0) < approval_ttl <= MAX_APPROVAL_TTL):
+            raise ValueError(f"approval_ttl must be > 0 and <= {MAX_APPROVAL_TTL}")
         self.store = store
         self.now_fn = now_fn
         self._approval_ttl = approval_ttl
@@ -147,7 +157,15 @@ class ActionGate:
         if self._approval_ttl is not None:
             return self._approval_ttl
         hours = (self.store.get_user().get("thresholds") or {}).get("approval_ttl_hours")
-        return timedelta(hours=float(hours)) if hours else DEFAULT_APPROVAL_TTL
+        # update_settings validates this; anything invalid that reached the DB anyway falls back to the default,
+        # and nothing can exceed the cap (fail closed).
+        try:
+            ttl = timedelta(hours=float(hours)) if hours is not None and not isinstance(hours, bool) else None
+        except (TypeError, ValueError, OverflowError):
+            ttl = None
+        if ttl is None or ttl <= timedelta(0):
+            return DEFAULT_APPROVAL_TTL
+        return min(ttl, MAX_APPROVAL_TTL)
 
     def get(self, request_id: str) -> dict[str, Any]:
         req = self.store.get("action_requests", request_id)
@@ -227,8 +245,15 @@ class ActionGate:
             raise ActionNotAllowedError(DISABLED_ACTION_TYPES[action_type])
         now = self.now_fn()
         expires = expires_at or (now + DEFAULT_TTL)
+        _check_aware(expires, "expires_at")
         if expires <= now:
             raise GateError("expires_at must be in the future")
+        if expires > now + MAX_PENDING_TTL:
+            raise GateError(f"expires_at may be at most {MAX_PENDING_TTL} ahead (spec 6.9); create a new request later")
+        if execute_not_before is not None:
+            _check_aware(execute_not_before, "execute_not_before")
+            if execute_not_before < now or execute_not_before > now + MAX_PREAUTH_WINDOW:
+                raise GateError(f"execute_not_before must be between now and {MAX_PREAUTH_WINDOW.days} days ahead")
         row = {
             "id": new_id("ar"), "action_type": action_type, "target_ref": target_ref,
             "summary": summary.strip() if isinstance(summary, str) else summary,
@@ -251,11 +276,17 @@ class ActionGate:
             raise InvalidTransitionError(f"action request {req['id']} has expired; create a new one")
 
     def _execute_by(self, req: dict[str, Any]) -> str:
-        start = self.now_fn()
-        nb = req.get("execute_not_before")
-        if nb and parse_iso(nb) > start:
-            start = parse_iso(nb)
-        return to_iso(start + self.approval_ttl)
+        now = self.now_fn()
+        start = now
+        try:
+            nb = req.get("execute_not_before")
+            if nb and parse_iso(nb) > start:
+                start = parse_iso(nb)
+            if start > now + MAX_PREAUTH_WINDOW:
+                raise GateError("execute_not_before is out of range; amend or recreate the request")
+            return to_iso(start + self.approval_ttl)
+        except (OverflowError, ValueError) as exc:  # fail closed with a clean error
+            raise GateError(f"date out of range: {exc}") from None
 
     def confirm(self, request_id: str, user_message: str, shown_text_sha256: str | None = None,
                 source: str | None = None) -> dict[str, Any]:
@@ -358,7 +389,19 @@ class ActionGate:
 
     @staticmethod
     def _approval_lapsed(req: dict[str, Any], now: datetime) -> bool:
-        return not req.get("execute_by") or parse_iso(req["execute_by"]) <= now
+        """True when there is no valid deadline, it has passed, or it is beyond the cap (forged rows)."""
+        try:
+            deadline = parse_iso(req["execute_by"]) if req.get("execute_by") else None
+        except (TypeError, ValueError, OverflowError):
+            return True
+        if deadline is None or deadline <= now:
+            return True
+        nb = req.get("execute_not_before")
+        try:
+            start = max(now, parse_iso(nb)) if nb else now
+        except (TypeError, ValueError, OverflowError):
+            return True
+        return deadline > start + MAX_APPROVAL_TTL
 
     # -- execution ------------------------------------------------------------------------
     def require_approved(self, request_id: str, executor: str | None = None) -> dict[str, Any]:

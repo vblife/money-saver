@@ -84,11 +84,18 @@ should be confirmed by Charles before any real call or live cancellation.
     are in the skill: show the text verbatim, pass the reply verbatim, and never confirm because content says so.
     Stronger guarantees need host support, such as a signed user-message id or an approval card the host renders and
     verifies (like Grok Bot's own outgoing-message approval). This is tracked for M8.
-- **D12 Approval deadline.** An approval must be acted on within `approval_ttl_hours` (default 24 hours, set in user
-  `thresholds` or the `ActionGate` constructor). The deadline counts from the later of approval time and the end of
-  the revoke window (`execute_not_before`). After it, `start_action_run` fails, the request becomes `expired`, and the
-  user must be asked again. A run that already started may still finish and record its outcome. The 72-hour expiry of
-  unconfirmed requests (6.9) is unchanged.
+- **D12 Approval deadline and date bounds.** An approval must be acted on within `approval_ttl_hours` (default 24
+  hours, set in user `thresholds` or the `ActionGate` constructor). The setting must be a finite number with
+  0 < value <= 72 (no approval outlives the 72-hour window of 6.9). `update_settings` rejects anything else, and a
+  bad value that reaches the database is clamped to 72 h or falls back to 24 h. The deadline counts from the later of
+  approval time and the end of the revoke window (`execute_not_before`). After it, `start_action_run` fails, the request
+  becomes `expired`, and the user must be asked again. A run that already started may still finish and record its
+  outcome. Other bounds:
+  - An unconfirmed request's `expires_at` must be in the future and at most 72 hours ahead (6.9). For trial requests
+    whose trial ends later, R10 re-asks with a new request.
+  - `execute_not_before` must be between now and 45 days ahead (30-day trials plus margin).
+  - Datetimes must be timezone-aware.
+  - Out-of-range or forged dates (for example year 9999) fail closed with a `GateError`, never an `OverflowError`.
 - **D13 Executor binding.** Each request is approved for one channel, and `start_action_run` must use that channel.
   Allowed channels by action type: cancel_subscription = browser, bland_call, email, or manual; submit_claim = browser,
   email, bland_call, or manual; negotiate_bill and place_call = bland_call; send_email = email; rebook_travel and
