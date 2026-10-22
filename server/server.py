@@ -27,6 +27,7 @@ from core.merchant_resolver import MerchantResolver  # noqa: E402
 from core.privacy import ForbiddenDataError  # noqa: E402
 from core.store import USER_FIELDS, Store  # noqa: E402
 from modules import subscriptions as subs_mod  # noqa: E402
+from modules.statements import StatementError, StatementImporter  # noqa: E402
 
 NAME, VERSION = "money-saver", "0.1.0"
 DELETE_PHRASE = "DELETE ALL MY DATA"
@@ -85,6 +86,10 @@ TOOLS = [
      "inputSchema": O({"display_name": S, "amount_cents": I, "period": {"type": "string", "enum": list(subs_mod.PERIODS)},
                        "next_charge_date": S, "merchant_id": S, "account_email": S},
                       ["display_name", "amount_cents", "period"])},
+    {"name": "import_card_statement", "title": "Import a card statement (PDF/CSV)",
+     "description": "FR-0-8 / US-1-3: read a statement the user put in the upload inbox. Only likely recurring lines are kept (date, descriptor, amount, card last 4); everything else is discarded. The original file is deleted afterwards unless keep_original is true (PV-3). Never ask the user to link a bank account.",
+     "inputSchema": O({"path": S, "keep_original": B, "year": {"type": "integer", "minimum": 2000, "maximum": 2100},
+                       "card_last4": {"type": "string", "pattern": "^[0-9]{4}$"}}, ["path"])},
     {"name": "create_action_request", "title": "Create action request",
      "description": "REQUIRED before any consequential action (cancel, call, claim, email, rebook, form with personal data, accepting terms). Lists exact steps, the executor channel, disclosed fields (must be in approved_pii_fields), risks, and the draft/script. 'purchase' is disabled. Show the returned confirmation_text to the user verbatim; it contains a confirmation code the user replies with.",
      "inputSchema": O({"action_type": {"type": "string", "enum": list(ACTION_TYPES)}, "target_ref": S, "summary": S,
@@ -205,6 +210,9 @@ class App:
                                                                  a.get("status"))}
         if name == "add_subscription":
             return {"subscription": subs_mod.add_manual_subscription(st, **a)}
+        if name == "import_card_statement":
+            imp = StatementImporter(st, self.resolver, self.evidence.allowed_dirs, self.evidence.root)
+            return imp.import_file(a["path"], bool(a.get("keep_original")), a.get("year"), a.get("card_last4"))
         if name == "create_action_request":
             from core.util import parse_iso
             for k in ("expires_at", "execute_not_before"):
@@ -300,7 +308,7 @@ class Server:
                 raise KeyError(f"unknown tool: {name}")
             try:
                 r = self.app.call(name, p.get("arguments"))
-            except (GateError, LedgerError, ForbiddenDataError, EvidencePathError, FileNotFoundError, ValueError, TypeError, KeyError) as e:
+            except (GateError, LedgerError, ForbiddenDataError, EvidencePathError, StatementError, FileNotFoundError, ValueError, TypeError, KeyError) as e:
                 return {"content": [{"type": "text", "text": f"Error: {type(e).__name__}: {e}"}], "isError": True}
             return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False)}], "structuredContent": r}
         raise NotImplementedError(meth)

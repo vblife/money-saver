@@ -159,3 +159,25 @@ def test_stdio_subscription_inventory(tmp_path):
         assert ctx["counts"]["subscriptions"] == 2 and ctx["counts"]["action_requests"] == 0
     finally:
         c.close()
+
+
+def test_stdio_card_statement_import(tmp_path):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    f = inbox / "stmt.csv"
+    f.write_text("Date,Description,Amount\n2026-09-03,SPOTIFY USA,11.99\n2026-10-03,SPOTIFY USA,11.99\n"
+                 "2026-10-04,GROCERY OUTLET,54.10\n")
+    outside = tmp_path / "elsewhere.csv"
+    outside.write_text("Date,Description,Amount\n2026-10-03,SPOTIFY USA,11.99\n")
+    c = Client(tmp_path)
+    try:
+        c.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        out = c.tool("import_card_statement", path=str(f))["structuredContent"]
+        assert out["kept"] == 2 and out["dropped"] == 1 and out["original_deleted"] and not f.exists()
+        bad = c.tool("import_card_statement", path=str(outside))
+        assert bad["isError"] and outside.exists()
+        listing = c.tool("list_subscriptions")["structuredContent"]
+        assert [s["display_name"] for s in listing["subscriptions"]] == ["Spotify"]
+        assert "GROCERY" not in json.dumps(listing)
+    finally:
+        c.close()

@@ -183,7 +183,14 @@ class SubscriptionInventory:
     def _existing(self, merchant_id: str, account: str, channel: str) -> dict[str, Any] | None:
         hits = self.store.find("subscriptions", {"merchant_id": merchant_id, "account_email": account,
                                                  "billing_channel": channel})
-        return hits[0] if hits else None
+        if hits:
+            return hits[0]
+        # A subscription first seen on a card statement has no account email yet: adopt it (M1c).
+        orphans = [s for s in self.store.find("subscriptions", {"merchant_id": merchant_id, "billing_channel": channel})
+                   if s.get("account_email") is None and "card_statement" in (s.get("source") or [])]
+        if orphans:
+            return self.store.update("subscriptions", orphans[0]["id"], {"account_email": account})
+        return None
 
     def _upsert(self, key, group, usage_msgs, tz, today):
         merchant_id, account, channel = key

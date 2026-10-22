@@ -44,7 +44,7 @@ Source: `docs/spec.md` chapter 12 (milestones), with the defaults in `docs/decis
    confidence (FR-1-7); `Reminder` rows at T-2 and T-1 at 09:00 local (FR-1-8); pre-authorized auto-cancel with the
    2-hour revoke window (FR-1-9, already supported by the gate); routines R1, R3, R4, R10 as code (scheduling config
    held for approval).
-3. **M1c Card statement upload:** PDF (`pdftotext`) and CSV parsing, keep only likely recurring lines, delete the
+3. **M1c Card statement upload** (done in `modules/statements.py`; see D26-D29): PDF (`pdftotext`) and CSV parsing, keep only likely recurring lines, delete the
    original by default (FR-0-8, PV-3).
 4. **M1d Cancellation execution:** browser playbooks for the top 30 merchants (FR-1-10), Bland cancel call script with
    AI disclosure (FR-1-11), email-cancel drafts handed to the user's approval flow (FR-1-12), evidence and 48-hour

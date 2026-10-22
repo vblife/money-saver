@@ -150,3 +150,24 @@ should be confirmed by Charles before any real call or live cancellation.
   Increases are computed when asked for and are not stored. Deduplicating notifications belongs to the routines
   (M1b).
 
+## Engineering decisions (M1c: card statements)
+- **D26 Statement intake.** `import_card_statement` reads only files in the upload inbox (the evidence inbox
+  directories). It applies the D14 checks: no symlinks or hard links, re-verified through the open descriptor.
+  Size cap is 10 MB. PDFs go through poppler `pdftotext -layout`, fed the verified bytes on stdin. CSVs use the
+  stdlib. Header aliases cover common exports. Purchases exported as negative amounts are detected by majority
+  sign, and payments, returns, and credits are dropped.
+- **D27 What is kept (FR-0-8, PV-3).** A line is kept only if it is a positive charge and one of these holds:
+  - it resolves to a registry merchant outside retail and food delivery;
+  - its descriptor has subscription wording (subscription, membership, recurring, prime, ...);
+  - the same descriptor repeats within 10% of the amount at a subscription interval (D18 bands).
+  All other lines are discarded and never stored. A kept line stores only date, redacted descriptor, amount, and card
+  last 4. Card numbers in a card column are cut to the last 4 digits. Limitation: an unknown merchant that appears
+  once per statement is only caught when two or more months are uploaded, or through its wording.
+- **D28 Original file.** The upload is deleted right after it is read, by default, even if parsing then fails, and
+  the result or error says so. `keep_original: true` keeps it.
+- **D29 Linking.** PayPal/Apple/Google/Amazon descriptor prefixes set the billing channel. A charge links to the
+  existing subscription with the same merchant and channel, preferring one with the same card ending. Otherwise a
+  statement-only subscription is created (no account email; confidence 0.7, or 0.5 for an unknown merchant). A
+  later Gmail receipt adopts that row instead of creating a duplicate. Statement charge references are deterministic
+  letter-only digests, so re-importing the same statement adds nothing. No schema change.
+
