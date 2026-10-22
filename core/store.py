@@ -6,6 +6,7 @@ encoding, ``updated_at`` stamping, and sensitive-data redaction stay consistent.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -213,6 +214,7 @@ class Store:
             os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
+        self._tx_depth = 0
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.migrate()
 
@@ -272,6 +274,29 @@ class Store:
     def close(self) -> None:
         self.conn.close()
 
+    @contextlib.contextmanager
+    def transaction(self):
+        """One atomic unit of work: every write inside commits together, or none does if an exception escapes.
+
+        Nested calls join the outermost transaction. Outside a transaction each write commits on its own."""
+        if self._tx_depth:
+            self._tx_depth += 1
+            try:
+                yield self
+            finally:
+                self._tx_depth -= 1
+            return
+        self._tx_depth = 1
+        try:
+            with self.conn:  # commit on success, roll back on any exception
+                yield self
+        finally:
+            self._tx_depth = 0
+
+    def _write(self):
+        """Context for one write: commits immediately, unless it runs inside :meth:`transaction`."""
+        return contextlib.nullcontext() if self._tx_depth else self.conn
+
     # -- generic CRUD ---------------------------------------------------------------
     @staticmethod
     def _check_table(table: str) -> None:
@@ -316,7 +341,7 @@ class Store:
         enc = self._encode(table, row)
         cols = ", ".join(enc)
         marks = ", ".join("?" for _ in enc)
-        with self.conn:
+        with self._write():
             self.conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", list(enc.values()))
         return self.get(table, row["id"])
 
@@ -331,7 +356,7 @@ class Store:
         changes["updated_at"] = to_iso(utcnow())
         enc = self._encode(table, changes)
         sets = ", ".join(f"{k} = ?" for k in enc)
-        with self.conn:
+        with self._write():
             cur = self.conn.execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*enc.values(), row_id])
         if cur.rowcount != 1:
             raise KeyError(f"{table}/{row_id} not found")
@@ -394,6 +419,8 @@ class Store:
 
     def wipe_all(self) -> dict[str, int]:
         """PV-8: delete every row from every table. Returns counts deleted per table."""
+        if self._tx_depth:
+            raise RuntimeError("wipe_all cannot run inside a transaction")
         counts = {}
         with self.conn:
             self.conn.execute("PRAGMA foreign_keys = OFF")

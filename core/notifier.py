@@ -120,6 +120,7 @@ SUB_LABELS = {
            "inferred": "inferred", "conf": "confidence", "trial": "free trial ends", "then": "then",
            "total": "Active total: {m}/month (about {y}/year)", "empty": "I haven't found any subscriptions yet.",
            "review": "Please check these (low confidence): {names}",
+           "fixed": "not a subscription (regular fixed expense such as rent; not in the total)",
            "via": {"apple": "via Apple", "google_play": "via Google Play", "paypal": "via PayPal",
                    "amazon": "via Amazon"},
            "signals": {"active": "recently active", "likely_unused": "possibly unused", "unknown": "unknown"},
@@ -129,6 +130,7 @@ SUB_LABELS = {
            "conf": "置信度", "trial": "免费试用结束", "then": "之后",
            "total": "活跃订阅合计：{m}/月（约 {y}/年）", "empty": "暂未发现订阅。",
            "review": "请核实以下项目（置信度低）：{names}",
+           "fixed": "不是订阅（房租等固定支出，未计入合计）",
            "via": {"apple": "经 Apple", "google_play": "经 Google Play", "paypal": "经 PayPal", "amazon": "经 Amazon"},
            "signals": {"active": "近期活跃", "likely_unused": "可能未使用", "unknown": "未知"},
            "price": "价格上涨：{name} 从 {old} 涨到 {new}{per}。",
@@ -157,6 +159,8 @@ def format_subscription_list(listing: dict[str, Any], lang: str = "en") -> str:
         signal = L["signals"].get(s.get("last_used_signal") or "unknown", "")
         parts.append(f"{L['used']}: {signal} ({L['inferred']})")
         parts.append(f"{L['conf']} {s.get('confidence', 0):.2f}")
+        if s.get("not_a_subscription"):
+            parts.append(L["fixed"])
         lines.append("• " + " · ".join(parts))
     m = listing.get("monthly_total_cents") or 0
     lines.append(L["total"].format(m=money(m), y=money(m * 12)))

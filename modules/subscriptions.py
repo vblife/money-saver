@@ -17,6 +17,7 @@ this module contacts anyone.
 from __future__ import annotations
 
 import calendar
+import re
 import statistics
 from datetime import date, timedelta
 from typing import Any
@@ -381,7 +382,7 @@ class SubscriptionInventory:
     def price_changes(self) -> list[dict[str, Any]]:
         out = []
         for sub in self.store.find("subscriptions"):
-            if sub["status"] in ("cancelled", "expired", "ignored"):
+            if sub["status"] in ("cancelled", "expired", "ignored") or is_fixed_expense(sub):
                 continue
             charges = sorted(self.store.find("charges", {"subscription_id": sub["id"]}), key=lambda c: c["date"])
             if len(charges) >= 2 and charges[-1]["amount_cents"] > charges[-2]["amount_cents"]:
@@ -439,6 +440,19 @@ def _norm(v: Any) -> Any:
 
 
 # --- user-facing operations ---------------------------------------------------------------------
+# Regular fixed expenses that repeat like a subscription but are not one (rent, HOA, mortgage). Statement lines
+# that match are kept under D27 (they repeat) but are labelled "not a subscription" and left out of the totals.
+FIXED_EXPENSE_RX = re.compile(
+    r"\b(?:rent(?!\s+the\s+runway)(?:\s+payment)?|apartments?|apts?|property\s+(?:management|mgmt)|prop\s+mgmt|"
+    r"hoa|homeowners?\s+assoc\w*|condo(?:minium)?\s+assoc\w*|landlord|leasing\s+office|mortgage)\b", re.I)
+
+
+def is_fixed_expense(sub: dict[str, Any]) -> bool:
+    """True for a statement-only row with no registry merchant whose name looks like rent, HOA or a mortgage."""
+    return (not sub.get("merchant_id") and "card_statement" in (sub.get("source") or [])
+            and bool(FIXED_EXPENSE_RX.search(sub.get("display_name") or "")))
+
+
 LIST_HIDDEN = ("cancelled", "expired", "ignored")
 USER_STATUS_CHANGES = {"ignored", "active"}   # mark ignored (gift/company-paid, 10.1) or undo that
 USER_DECISIONS = ("none", "keep", "cancel", "remind_later")
@@ -454,9 +468,12 @@ def list_subscriptions(store: Store, include_inactive: bool = False) -> dict[str
         charges = sorted(store.find("charges", {"subscription_id": s["id"]}), key=lambda c: c["date"])
         s["charge_count"] = len(charges)
         s["recent_charges"] = [{"date": c["date"], "amount_cents": c["amount_cents"]} for c in charges[-3:]]
-    counted = [s for s in subs if s["status"] in ("active", "trial") and s.get("monthly_equiv_cents")]
+        s["not_a_subscription"] = is_fixed_expense(s)
+    counted = [s for s in subs if s["status"] in ("active", "trial") and s.get("monthly_equiv_cents")
+               and not s["not_a_subscription"]]
     total = sum(s["monthly_equiv_cents"] for s in counted if s["status"] == "active")
     return {"subscriptions": subs, "monthly_total_cents": total, "annual_total_cents": total * 12,
+            "not_subscriptions": [s["id"] for s in subs if s["not_a_subscription"]],
             "unknown_amount": [s["id"] for s in subs if s.get("monthly_equiv_cents") is None],
             "needs_review": [s["id"] for s in subs if (s.get("confidence") or 0) < 0.6]}
 

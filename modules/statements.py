@@ -28,11 +28,12 @@ from datetime import date, timedelta
 from typing import Any
 
 from core import privacy
+from core.privacy import ForbiddenDataError
 from core.evidence import EvidenceStore
 from core.merchant_resolver import MerchantResolver, normalize_name
 from core.store import Store
-from modules.subscriptions import (EXPIRY_GRACE_DAYS, INTERVAL_BANDS, PROTECTED_STATUSES, SubscriptionInventory,
-                                   _tz, add_period, infer_period, monthly_equiv)
+from modules.subscriptions import (EXPIRY_GRACE_DAYS, FIXED_EXPENSE_RX, INTERVAL_BANDS, PROTECTED_STATUSES,
+                                   SubscriptionInventory, _tz, add_period, infer_period, monthly_equiv)
 from core.util import utcnow
 
 MAX_BYTES = 10 * 1024 * 1024
@@ -41,6 +42,13 @@ PDFTOTEXT_TIMEOUT_S = 30
 SUBSCRIPTION_CATEGORIES_EXCLUDED = {"retail", "food_delivery"}  # one-off purchases unless a keyword says otherwise
 KEYWORDS = re.compile(r"\b(subscription|subscr|membership|member fee|monthly|annual fee|recurring|renewal|prime)\b", re.I)
 AMOUNT_TOLERANCE = 0.10
+# Card payments and credits by their descriptor. These lines are never charges, whatever their sign, and their
+# sign tells which convention a single-amount CSV uses (D26). Bare "credit" is not matched ("credit monitoring"
+# is a real subscription).
+PAYMENT_RX = re.compile(
+    r"\b(?:autopay|auto[\s-]?pay|automatic\s+payment|payments?|pymt|pmt|thank\s+you|"
+    r"refund|return(?:ed)?\s+(?:item|merchandise|purchase)|statement\s+credit|credit\s+(?:adj\w*|voucher|balance)|"
+    r"cash\s*back\s+(?:reward|redemption)\w*)\b", re.I)
 # Billing-aggregator / processor prefixes in descriptors -> (billing_channel, keep-the-rest-as-merchant-text)
 PREFIXES = [
     (re.compile(r"^\s*paypal\s*\*\s*(?P<rest>.+)$", re.I), "paypal"),
@@ -137,7 +145,7 @@ def parse_pdf_text(text: str, default_year: int) -> list[dict[str, Any]]:
         amt = _cents(m["amt"])
         if d is None or amt is None:
             continue
-        if m["cr"]:
+        if m["cr"] or PAYMENT_RX.search(m["desc"]):
             amt = -abs(amt)
         out.append({"date": d, "description": m["desc"].strip(), "amount_cents": amt, "card_last4": None})
     return out
@@ -154,8 +162,21 @@ def _header_map(header: list[str]) -> dict[str, int]:
     return found
 
 
+def _csv_rows(text: str) -> list[list[str]]:
+    rows = []
+    try:
+        for row in csv.reader(io.StringIO(text)):
+            rows.append(row)
+            if len(rows) > MAX_LINES:
+                break
+    except csv.Error as exc:  # e.g. a field over csv.field_size_limit() (131,072 chars), or a NUL byte
+        msg = "a field is too long" if "field larger than" in str(exc) else "the file is malformed"
+        raise StatementError(f"could not read the CSV ({msg}, near line {len(rows) + 1})") from None
+    return rows
+
+
 def parse_csv_text(text: str, default_year: int) -> list[dict[str, Any]]:
-    rows = list(csv.reader(io.StringIO(text)))[: MAX_LINES + 1]
+    rows = _csv_rows(text)
     start = next((i for i, r in enumerate(rows[:20]) if {"date", "description"} <= set(_header_map(r))), None)
     if start is None:
         raise StatementError("CSV needs a header row with a date column and a description column")
@@ -184,18 +205,39 @@ def parse_csv_text(text: str, default_year: int) -> list[dict[str, Any]]:
             last4 = digits[-4:] if len(digits) >= 4 else None
         parsed.append({"date": d, "description": r[cols["description"]].strip(), "amount_cents": amt,
                        "card_last4": last4, "type": kind})
-    # Sign convention: some banks export purchases as negative amounts. If most "sale" rows are negative, flip.
-    single = "amount" in cols and "debit" not in cols
-    if single and parsed:
-        sales = [p for p in parsed if p.get("type") in ("sale", "purchase", "debit")] or parsed
-        if sum(1 for p in sales if p["amount_cents"] < 0) > len(sales) / 2:
-            for p in parsed:
-                p["amount_cents"] = -p["amount_cents"]
+    if "amount" in cols and "debit" not in cols and _purchases_are_negative(parsed):
+        for p in parsed:
+            p["amount_cents"] = -p["amount_cents"]
     for p in parsed:
-        if p.get("type") in ("payment", "return", "refund", "credit", "adjustment"):
+        if p.get("type") in CREDIT_TYPES or PAYMENT_RX.search(p["description"]):
             p["amount_cents"] = -abs(p["amount_cents"])
         p.pop("type", None)
     return parsed
+
+
+SALE_TYPES = ("sale", "purchase", "debit")
+CREDIT_TYPES = ("payment", "return", "refund", "credit", "adjustment")
+
+
+def _purchases_are_negative(parsed: list[dict[str, Any]]) -> bool:
+    """Sign convention of a single amount column (D26). Never decided by a majority vote over all rows:
+    1. a type column: the sign of the rows typed sale/purchase/debit, if they all agree;
+    2. else payment/credit descriptors (AUTOPAY, PAYMENT, THANK YOU, REFUND, ...), if they all agree: negative
+       payments mean the usual convention; positive payments mean purchases are negative, unless every other row
+       is positive too (an unsigned export);
+    3. else purchases are negative only if every other row is negative.
+    Anything ambiguous keeps the usual convention (charges positive). Payment lines are dropped either way."""
+    typed = [p["amount_cents"] < 0 for p in parsed if p.get("type") in SALE_TYPES and p["amount_cents"]]
+    if typed:
+        return all(typed)
+    credits = [p["amount_cents"] > 0 for p in parsed if (p.get("type") in CREDIT_TYPES or PAYMENT_RX.search(p["description"]))
+               and p["amount_cents"]]
+    rest = [p["amount_cents"] < 0 for p in parsed if not PAYMENT_RX.search(p["description"]) and p["amount_cents"]]
+    if credits and not any(credits):
+        return False
+    if credits and all(credits):
+        return any(rest)
+    return bool(rest) and all(rest)
 
 
 def pdf_to_text(data: bytes) -> str:
@@ -248,7 +290,8 @@ class StatementImporter:
             channel = CHANNEL_BY_ID[m["id"]]
         known_sub = bool(m) and m.get("category") not in SUBSCRIPTION_CATEGORIES_EXCLUDED
         return {"merchant_id": merchant_id, "channel": channel, "known_subscription_merchant": known_sub,
-                "keyword": bool(KEYWORDS.search(desc)), "key": descriptor_key(desc)}
+                "keyword": bool(KEYWORDS.search(desc)), "key": descriptor_key(desc),
+                "fixed_expense": not merchant_id and bool(FIXED_EXPENSE_RX.search(desc))}
 
     def select_recurring(self, lines: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
         charges = [dict(line, **self.classify_line(line["description"])) for line in lines if line["amount_cents"] > 0]
@@ -267,6 +310,8 @@ class StatementImporter:
                 if c["known_subscription_merchant"] or c["keyword"] or repeated:
                     c["reason"] = ("known subscription merchant" if c["known_subscription_merchant"]
                                    else "subscription wording" if c["keyword"] else "repeats at a regular interval")
+                    if c["fixed_expense"]:
+                        c["reason"] += "; regular fixed expense (rent, HOA, mortgage), not a subscription"
                     keep.append(c)
         dropped = len(lines) - len(keep)
         return sorted(keep, key=lambda c: (c["date"], c["description"])), dropped
@@ -293,6 +338,11 @@ class StatementImporter:
         return "stmt_" + _letters(digest)
 
     def import_lines(self, lines: list[dict[str, Any]], today: date | None = None) -> dict[str, Any]:
+        """Store the kept lines. One transaction: an error on any line leaves the database as it was."""
+        with self.store.transaction():
+            return self._import_lines(lines, today)
+
+    def _import_lines(self, lines: list[dict[str, Any]], today: date | None = None) -> dict[str, Any]:
         tz = _tz(self.store.get_user().get("timezone"))
         today = today or utcnow().astimezone(tz).date()
         keep, dropped = self.select_recurring(lines)
@@ -313,7 +363,8 @@ class StatementImporter:
                 sub = self.store.insert("subscriptions", {
                     "merchant_id": c["merchant_id"], "display_name": name, "billing_channel": c["channel"],
                     "account_email": None, "amount_cents": c["amount_cents"], "status": "active",
-                    "confidence": 0.7 if c["merchant_id"] else 0.5, "source": ["card_statement"],
+                    "confidence": 0.7 if c["merchant_id"] else 0.3 if c["fixed_expense"] else 0.5,
+                    "source": ["card_statement"],
                     "last_used_signal": "unknown",
                     "last_used_evidence": "Inferred: found on a card statement; no usage emails checked"})
                 created.append(sub["id"])
@@ -334,8 +385,10 @@ class StatementImporter:
             SubscriptionInventory(self.store, self.resolver).build(today)
         return {"lines_read": len(lines), "kept": len(keep), "dropped": dropped, "charges_added": added,
                 "subscriptions_created": created, "subscriptions_linked": sorted(linked - set(created)),
+                "not_subscriptions": sum(1 for c in keep if c["fixed_expense"]),
                 "kept_preview": [{"date": c["date"].isoformat(), "description": privacy.redact(c["description"])[:80],
-                                  "amount_cents": c["amount_cents"], "reason": c["reason"]} for c in keep[:50]]}
+                                  "amount_cents": c["amount_cents"], "reason": c["reason"],
+                                  "not_a_subscription": c["fixed_expense"]} for c in keep[:50]]}
 
     def refresh(self, sub_id: str, today: date) -> None:
         """Derived fields for a statement-only subscription (Gmail-backed rows are refreshed by the inventory)."""
@@ -395,7 +448,10 @@ class StatementImporter:
         if card_last4:
             for line in lines:
                 line["card_last4"] = line.get("card_last4") or card_last4
-        result = self.import_lines(lines, today)
+        try:
+            result = self.import_lines(lines, today)
+        except ForbiddenDataError as exc:
+            raise StatementError(f"nothing was imported ({exc}){'; the upload was deleted' if deleted else ''}") from None
         return {"file_type": kind, **result, "original_deleted": deleted,
                 "note": "Only likely recurring lines were kept; the rest of the statement was not stored."}
 

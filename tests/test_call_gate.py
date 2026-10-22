@@ -297,7 +297,7 @@ def test_email_and_browser_unaffected(gate):
 
 
 def test_server_build_call_script_round_trip(tmp_path):
-    app = App(str(tmp_path / "msb.db"), str(tmp_path / "ev"), str(tmp_path / "inbox"))
+    app = App(str(tmp_path / "msb.db"), str(tmp_path / "ev"), [str(tmp_path / "inbox")])
     try:
         app.store.update_user({"approved_pii_fields": ["name"]})
         with pytest.raises(CallPolicyError):   # no saved name yet

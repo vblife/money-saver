@@ -36,11 +36,29 @@ class EvidencePathError(ValueError):
     """Raised when a file outside the allowed evidence inbox (or a symlink) is offered as evidence."""
 
 
+def _inbox_dirs(allowed_dirs: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Validate the inbox directory list. A bare string is refused: iterating it would yield single characters,
+    including ``/``, which would let any path through (and M1c deletes uploads from the inbox)."""
+    if allowed_dirs is None or (isinstance(allowed_dirs, (list, tuple)) and not allowed_dirs):
+        allowed_dirs = default_evidence_inbox_dirs()
+    if not isinstance(allowed_dirs, (list, tuple)):
+        raise TypeError(f"allowed_dirs must be a list or tuple of directory paths, not {type(allowed_dirs).__name__}")
+    out = []
+    for d in allowed_dirs:
+        if not isinstance(d, str) or not d.strip():
+            raise TypeError("each evidence inbox directory must be a non-empty path string")
+        real = os.path.realpath(os.path.expanduser(d))
+        if real == os.path.dirname(real):  # the filesystem root would allow every path
+            raise ValueError(f"the evidence inbox cannot be the filesystem root: {d}")
+        out.append(real)
+    return out
+
+
 class EvidenceStore:
     def __init__(self, store: Store, root: str | None = None, allowed_dirs: list[str] | None = None):
         self.store = store
         self.root = root or default_evidence_dir()
-        self.allowed_dirs = [os.path.realpath(d) for d in (allowed_dirs or default_evidence_inbox_dirs())]
+        self.allowed_dirs = _inbox_dirs(allowed_dirs)
 
     def check_source(self, src_path: str) -> str:
         """D14: only regular, non-symlink, single-link files whose real path is inside an allowed inbox dir."""
