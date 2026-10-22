@@ -124,3 +124,38 @@ def test_stdio_end_to_end(tmp_path):
         assert c.rpc("tools/call", {"name": "nope", "arguments": {}})["error"]["code"] == -32602
     finally:
         c.close()
+
+
+def test_stdio_subscription_inventory(tmp_path):
+    c = Client(tmp_path)
+    try:
+        c.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        names = {t["name"] for t in c.rpc("tools/list")["result"]["tools"]}
+        assert {"build_subscription_inventory", "list_subscriptions", "subscription_price_changes",
+                "update_subscription", "add_subscription"} <= names
+        msgs = [{"id": f"n{i}", "from": "Netflix <billing@netflix.com>", "subject": "Your Netflix receipt",
+                 "body": f"Thanks for your payment. You were charged ${amt} for your monthly Netflix plan on {day}.",
+                 "date": iso} for i, (amt, day, iso) in enumerate([
+                     ("15.49", "Aug 3, 2026", "2026-08-03T16:00:00Z"), ("17.99", "Sep 3, 2026", "2026-09-03T16:00:00Z")])]
+        c.tool("ingest_messages", account="alex@example.com", messages=msgs)
+        built = c.tool("build_subscription_inventory", today="2026-09-10")["structuredContent"]
+        assert len(built["created"]) == 1 and built["charges_added"] == 2
+        assert built["price_changes"][0]["new_cents"] == 1799
+        again = c.tool("build_subscription_inventory", today="2026-09-10")["structuredContent"]
+        assert again["created"] == [] and again["updated"] == [] and again["charges_added"] == 0
+        listing = c.tool("list_subscriptions", lang="en")["structuredContent"]
+        sub = listing["subscriptions"][0]
+        assert sub["next_charge_date"] == "2026-10-03" and "(inferred)" in listing["text"]
+        pc = c.tool("subscription_price_changes")["structuredContent"]
+        assert "$17.99" in pc["text"]
+        bad = c.tool("update_subscription", subscription_id=sub["id"], status="cancelled")
+        assert bad["isError"] and "confirmation gate" in bad["content"][0]["text"]
+        ok = c.tool("update_subscription", subscription_id=sub["id"], user_decision="cancel")["structuredContent"]
+        assert ok["subscription"]["status"] == "active"   # recording a decision cancels nothing
+        added = c.tool("add_subscription", display_name="Local gym", amount_cents=4000, period="monthly")
+        assert added["structuredContent"]["subscription"]["source"] == ["user_added"]
+        assert c.tool("add_subscription", display_name="x", amount_cents=-5, period="monthly")["isError"]
+        ctx = c.tool("get_context")["structuredContent"]
+        assert ctx["counts"]["subscriptions"] == 2 and ctx["counts"]["action_requests"] == 0
+    finally:
+        c.close()
