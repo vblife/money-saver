@@ -1,7 +1,5 @@
 """M1d executors (FR-1-10..12): the web playbook runner, the Bland call adapter and the email handoff. Everything
 here runs on fakes. No network, no real call, no email sent, no real cancellation."""
-import io
-import json
 import os
 import re
 
@@ -294,35 +292,20 @@ def test_call_limits(store, clock, live):
     assert len(fake.sent) == 1
 
 
-def test_http_client_needs_a_key_and_speaks_the_documented_endpoints(monkeypatch):
-    monkeypatch.delenv(bland.API_KEY_ENV, raising=False)
-    with pytest.raises(bland.BlandUnavailableError):
-        bland.HttpBlandClient()
-    seen = []
+def test_payload_failure_after_the_run_started_closes_the_run(store, clock, live, monkeypatch):
+    guard, gate, ev = live
+    req = call_request(gate, store, guard)
+    fake = bland.FakeBlandClient()
 
-    class Resp(io.BytesIO):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    def opener(req, timeout):
-        seen.append((req.get_method(), req.full_url, req.get_header("Authorization")))
-        return Resp(json.dumps({"status": "success", "call_id": "c1"}).encode())
-
-    c = bland.HttpBlandClient(api_key="test-not-a-key", opener=opener)
-    c.send_call({"phone_number": "+18005550100", "task": "x"})
-    c.get_call("c1")
-    c.stop_call("c1")
-    assert seen == [("POST", "https://api.bland.ai/v1/calls", "Bearer test-not-a-key"),
-                    ("GET", "https://api.bland.ai/v1/calls/c1", "Bearer test-not-a-key"),
-                    ("POST", "https://api.bland.ai/v1/calls/c1/stop", "Bearer test-not-a-key")]
-
-    def broken(req, timeout):
-        raise OSError("down")
-    with pytest.raises(bland.BlandUnavailableError):
-        bland.HttpBlandClient(api_key="k", opener=broken).get_call("c1")
+    def boom(*a, **k):
+        raise GateError("the call request has no reviewed phone number in constraints.cancel_target")
+    monkeypatch.setattr(bland, "build_payload", boom)
+    out = bland.BlandCallExecutor(gate, fake, ev, clock).place(req["id"])
+    assert out["status"] == "failed" and out["error_code"] == "call_request_invalid"
+    run = out["run"]
+    assert run["finished_at"] is not None and run["outcome"] == "failed"
+    assert gate.get(req["id"])["status"] == "failed" and fake.sent == []
+    assert [r for r in store.find("action_runs") if r["finished_at"] is None] == []
 
 
 # -- email handoff ----------------------------------------------------------------------------------------------
@@ -351,13 +334,12 @@ def test_email_handoff_off_by_default(store, clock):
         EmailHandoffExecutor(gate).run(req["id"])
 
 
-def test_executors_have_no_send_or_network_paths():
+def test_executors_have_no_send_network_or_credential_paths():
     for name in ("browser.py", "email.py", "bland.py"):
         with open(os.path.join(ROOT, "executors", name), encoding="utf-8") as fh:
             src = fh.read()
-        assert "smtplib" not in src and "http.client" not in src
-        if name != "bland.py":
-            assert "urllib" not in src and "socket" not in src
+        for banned in ("smtplib", "http.client", "urllib", "socket", "requests", "os.environ", "getenv", "API_KEY"):
+            assert banned not in src, (name, banned)
 
 
 # -- server tools -------------------------------------------------------------------------------------------------

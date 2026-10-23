@@ -5,23 +5,21 @@ transcript against D30, saves it as evidence, and closes the run when the call f
 completed call that passes the audit is left for the bot to judge from the transcript (did the merchant confirm the
 cancellation?) and close with ``finish_action_run``.
 
-The client is an interface. Tests use :class:`FakeBlandClient`. :class:`HttpBlandClient` is a thin adapter for the
-documented v1 endpoints (``POST /v1/calls``, ``GET /v1/calls/{call_id}``, ``POST /v1/calls/{call_id}/stop``,
-https://docs.bland.ai). Nothing constructs it by default: the server has no Bland client unless one is passed in,
-so no paid call can be placed from this repository as shipped.
+The client is an interface (:class:`CallClient`, shaped after the documented v1 endpoints ``POST /v1/calls``,
+``GET /v1/calls/{call_id}`` and ``POST /v1/calls/{call_id}/stop``, https://docs.bland.ai). This module holds no HTTP
+client and reads no credentials: tests use :class:`FakeBlandClient`, and the server has no Bland client unless one
+is passed in, so no paid call can be placed from this repository as shipped.
 
-TODO(B3, Charles): the Bland account, the API key's deploy location, and the dispatch choice (plain ``task`` as here,
-or a dashboard agent, persona, or pathway) are not decided. Until then ``HttpBlandClient`` is unused.
+TODO(B3, Charles): a real HTTP client, the Bland account, where its API key lives, and the dispatch choice (plain
+``task`` as here, or a dashboard agent, persona, or pathway) are not decided. The client is a separate [RISKY] PR
+that needs Charles's approval.
 TODO(spec 10.2): "3 failed keypad (DTMF) attempts -> manual" needs a per-call IVR signal; the documented call
 details do not expose one, so the bot applies it from the transcript and closes the run with error_code
 ``ivr_failed``.
 """
 from __future__ import annotations
 
-import json
-import os
 import re
-import urllib.request
 from datetime import timezone
 from typing import Any, Callable, Mapping, Protocol
 from zoneinfo import ZoneInfo
@@ -30,8 +28,6 @@ from core import call_policy
 from core.action_gate import GateError
 from core.util import parse_iso, utcnow
 
-API_BASE = "https://api.bland.ai/v1"
-API_KEY_ENV = "BLAND_API_KEY"
 MAX_CALL_MINUTES = 60          # spec 10.2: hard cap per call
 BUSINESS_HOURS = (9, 17)       # spec 7.3: local business hours of the merchant
 DEFAULT_MAX_CALLS_PER_DAY = 5  # spec 7.3 (thresholds.max_calls_per_day)
@@ -78,37 +74,6 @@ class FakeBlandClient:
     def stop_call(self, call_id: str) -> dict[str, Any]:
         self.stopped.append(call_id)
         return {"status": "success"}
-
-
-class HttpBlandClient:
-    """Thin adapter for the documented Bland v1 call endpoints. Unused until B3 is decided (see module TODO)."""
-
-    def __init__(self, api_key: str | None = None, base_url: str = API_BASE, timeout: float = 20.0,
-                 opener: Callable[..., Any] = urllib.request.urlopen):
-        key = api_key or os.environ.get(API_KEY_ENV)
-        if not key:
-            raise BlandUnavailableError(f"no Bland API key ({API_KEY_ENV} is not set)")
-        self._key, self.base_url, self.timeout, self._open = key, base_url.rstrip("/"), timeout, opener
-
-    def _request(self, method: str, path: str, body: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method,
-                                     headers={"authorization": f"Bearer {self._key}",
-                                              "content-type": "application/json"})
-        try:
-            with self._open(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read().decode() or "{}")
-        except Exception as exc:  # noqa: BLE001 - any transport problem means "Bland unavailable"
-            raise BlandUnavailableError(f"Bland request failed: {type(exc).__name__}") from exc
-
-    def send_call(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return self._request("POST", "/calls", payload)
-
-    def get_call(self, call_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/calls/{call_id}")
-
-    def stop_call(self, call_id: str) -> dict[str, Any]:
-        return self._request("POST", f"/calls/{call_id}/stop", {})
 
 
 # -- payload ---------------------------------------------------------------------------------------------------------
@@ -203,6 +168,9 @@ class BlandCallExecutor:
         run = self.gate.begin_execution(request_id, "bland_call")
         try:
             payload = build_payload(req, run["id"], lang)
+        except Exception as exc:  # noqa: BLE001 - nothing was dialled; close the run instead of leaving it open
+            return self._fail(run, "call_request_invalid", f"{type(exc).__name__}: {exc}")
+        try:
             resp = self.client.send_call(payload)
         except BlandUnavailableError as exc:
             return self._fail(run, "bland_unavailable", str(exc))
