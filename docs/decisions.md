@@ -410,8 +410,9 @@ learned cancellation methods are proposals until a reviewed PR adds them to the 
 - **D38 Bland calls go through a thin adapter that is off by default.** `executors/bland.py` builds a
   `POST /v1/calls` body from documented fields only (`phone_number`, `task`, `first_sentence` set to the D30
   opening, `wait_for_greeting`, `record: false`, `max_duration: 60`, `voicemail: hangup`, a `tcpa:ai_disclosure`
-  guard rail, `metadata`, `external_id`). The server has no Bland client unless one is passed in, and
-  `HttpBlandClient` is never constructed by default; the key would come from `BLAND_API_KEY`, not the repo. Before
+  guard rail, `metadata`, `external_id`). The repo has only the `CallClient` interface and a fake; the server has
+  no Bland client unless one is passed in. A real HTTP client reads a credential, so it is a separate [RISKY] PR
+  that needs Charles (B3). Before
   dialling: the live switch, D35, a reviewed number, one call at a time, `max_calls_per_day`, and 09:00-17:00 in the
   merchant's `timezone` (or the user's). After the call the transcript is saved as evidence and audited against D30
   (opening disclosure, a truthful answer when asked, no human or user claims). A failed audit fails the run.
