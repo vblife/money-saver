@@ -22,6 +22,8 @@ from core import call_policy, gmail_scanner, notifier  # noqa: E402
 from core.action_gate import ACTION_TYPES, EXECUTORS, RUN_OUTCOMES, ActionGate, GateError, sha256_text  # noqa: E402
 from core.classifier import CATEGORIES, Classifier  # noqa: E402
 from core.execution_policy import LiveGuard  # noqa: E402
+from executors import bland as bland_mod, browser as browser_mod  # noqa: E402
+from executors.email import EmailHandoffExecutor  # noqa: E402
 from core.evidence import KINDS as EVIDENCE_KINDS, EvidencePathError, EvidenceStore  # noqa: E402
 from core.ledger import MODULES, Ledger, LedgerError  # noqa: E402
 from core.merchant_resolver import MerchantResolver  # noqa: E402
@@ -175,6 +177,21 @@ TOOLS = [
     {"name": "manual_cancel_guide", "title": "Manual cancellation guide",
      "description": "FR-1-14: steps, link, phone and talking points so the user can cancel themselves. Reviewed merchant registry only.",
      "inputSchema": O({"subscription_id": S, "lang": {"type": "string", "enum": ["en", "zh"]}}, ["subscription_id"]), "annotations": RO},
+    {"name": "get_cancel_playbook", "title": "Web cancellation playbook",
+     "description": "FR-1-10: the generic text-anchored playbook and its rules for a subscription's merchant, starting at the reviewed cancel URL. Follow it in your own browser only after start_action_run succeeded for an approved browser request. Read-only.",
+     "inputSchema": O({"subscription_id": S}, ["subscription_id"]), "annotations": RO},
+    {"name": "place_cancel_call", "title": "Place an approved cancellation call",
+     "description": "FR-1-11: start the gated run and queue the Bland call for an approved bland_call request. Refused unless the live switch is on, Charles approved the first paid call, the target is reviewed, the call limits allow it (one at a time, max_calls_per_day, 09:00-17:00 merchant time) and a Bland client is configured (none is, by default).",
+     "inputSchema": O({"request_id": S, "lang": {"type": "string", "enum": ["en", "zh"]}}, ["request_id"])},
+    {"name": "check_cancel_call", "title": "Check a cancellation call",
+     "description": "Read the call, save the transcript as evidence, and audit it against the honesty policy (D30). Closes the run when the call failed or the audit failed; otherwise judge the transcript and finish_action_run.",
+     "inputSchema": O({"run_id": S}, ["run_id"])},
+    {"name": "stop_cancel_call", "title": "Stop a cancellation call",
+     "description": "Stop an in-progress call (for example the user asked) and close its run as failed.",
+     "inputSchema": O({"run_id": S}, ["run_id"])},
+    {"name": "email_cancel_handoff", "title": "Hand over an approved cancellation email",
+     "description": "FR-1-12: for an approved email request, return the exact recipient, subject and body to put in a draft in the user's own mail app. Never sends. The run stays needs_user until the user forwards the confirmation.",
+     "inputSchema": O({"request_id": S, "lang": {"type": "string", "enum": ["en", "zh"]}}, ["request_id"])},
     {"name": "record_merchant_method_proposal", "title": "Record a learned cancellation method",
      "description": "Q11/D32: store a cancellation method the bot learned (URL, phone, email, steps) as a proposal, separate from the reviewed merchant registry. Proposals never drive a cancellation; they reach the registry only through a reviewed PR.",
      "inputSchema": O({"merchant_id": S, "merchant_name": S, "method": {"type": "string", "enum": list(PROPOSAL_METHODS)},
@@ -232,8 +249,9 @@ TOOLS = [
 
 
 class App:
-    def __init__(self, db_path=None, evidence_dir=None, evidence_inbox=None, live_guard=None):
+    def __init__(self, db_path=None, evidence_dir=None, evidence_inbox=None, live_guard=None, bland_client=None):
         self.store = Store(db_path)
+        self.bland_client = bland_client  # None by default: no paid call can be placed (B3)
         self.live_guard = live_guard or LiveGuard()  # reads config/execution.json; all channels off by default
         self.gate = ActionGate(self.store, live_guard=self.live_guard)
         self.proposals = MerchantProposals(self.store, self.live_guard.registry)
@@ -362,7 +380,38 @@ class App:
         if name == "plan_cancellation":
             return cancellation.plan_cancellation(st, self.live_guard, a["subscription_id"], a["executor"], a.get("lang", "en"))
         if name == "dry_run_action_request":
-            return cancellation.dry_run(st, self.live_guard, gate.get(a["request_id"]))
+            req = gate.get(a["request_id"])
+            out = cancellation.dry_run(st, self.live_guard, req)
+            if req["executor"] == "bland_call":
+                try:
+                    out["bland_payload_preview"] = bland_mod.build_payload(req, "dry-run")
+                except Exception as exc:  # noqa: BLE001 - a preview problem is reported, not raised
+                    out["bland_payload_error"] = str(exc)
+            elif req["executor"] == "browser":
+                out["playbook"] = browser_mod.playbook_for(self.live_guard.registry,
+                                                           (req.get("constraints") or {}).get("merchant_id"))
+            return out
+        if name == "get_cancel_playbook":
+            sub = st.get("subscriptions", a["subscription_id"])
+            if sub is None:
+                raise ValueError(f"subscription {a['subscription_id']} not found")
+            return browser_mod.playbook_for(self.live_guard.registry, sub.get("merchant_id"))
+        if name == "place_cancel_call":
+            req = gate.require_approved(a["request_id"], "bland_call")
+            self.live_guard.check(st, req)
+            if self.bland_client is None:
+                raise GateError("no Bland client is configured; the first real call needs Charles (B3)")
+            return bland_mod.BlandCallExecutor(gate, self.bland_client, self.evidence).place(a["request_id"],
+                                                                                            a.get("lang", "en"))
+        if name in ("check_cancel_call", "stop_cancel_call"):
+            if self.bland_client is None:
+                raise GateError("no Bland client is configured")
+            ex = bland_mod.BlandCallExecutor(gate, self.bland_client, self.evidence)
+            return ex.poll(a["run_id"]) if name == "check_cancel_call" else ex.stop(a["run_id"])
+        if name == "email_cancel_handoff":
+            ex = EmailHandoffExecutor(gate, a.get("lang", "en"))
+            run = ex.run(a["request_id"])
+            return {"run": run, "handoff": ex.handoff}
         if name == "manual_cancel_guide":
             return cancellation.manual_guide(st, self.live_guard.registry, a["subscription_id"], a.get("lang", "en"))
         if name == "record_merchant_method_proposal":
