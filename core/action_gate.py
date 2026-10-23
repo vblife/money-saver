@@ -538,6 +538,15 @@ class ActionGate:
                          f"run {run_id} finished: {outcome}")
         return run
 
+    def append_run_log(self, run_id: str, items: list) -> dict[str, Any]:
+        """Add log entries to an open run (for example a queued call id) without finishing it."""
+        run = self.store.get("action_runs", run_id)
+        if run is None:
+            raise KeyError(run_id)
+        if run["finished_at"] is not None:
+            raise InvalidTransitionError(f"run {run_id} is already finished")
+        return self.store.update("action_runs", run_id, {"log": list(run["log"]) + list(items)})
+
     # -- audit (8.4) ----------------------------------------------------------------------
     def timeline(self) -> list[dict[str, Any]]:
         """'What have you done for me?' All requests with their run, newest first."""

@@ -138,6 +138,25 @@ class EvidenceStore:
             "id": evidence_id, "kind": kind, "path_or_ref": dest, "sha256": digest.hexdigest(),
             "captured_at": to_iso(utcnow()), "related_ref": related_ref, "notes": privacy.redact(notes)})
 
+    def add_bytes(self, kind: str, data: bytes, filename: str, related_ref: str, notes: str = "") -> dict[str, Any]:
+        """Evidence an executor produced itself (a screenshot from its driver, a call transcript). Written straight
+        into the evidence directory; there is no source path to check."""
+        if kind not in FILE_KINDS:
+            raise ValueError(f"{kind} is not a file evidence kind")
+        if not isinstance(data, bytes) or not data:
+            raise ValueError("evidence data must be non-empty bytes")
+        name = _SAFE.sub("_", os.path.basename(filename or "")) or "evidence.bin"
+        evidence_id = new_id("evd")
+        dest_dir = self._entity_dir(related_ref, evidence_id)
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, name)
+        out_fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(out_fd, "wb") as out:
+            out.write(data)
+        return self.store.insert("evidence", {
+            "id": evidence_id, "kind": kind, "path_or_ref": dest, "sha256": hashlib.sha256(data).hexdigest(),
+            "captured_at": to_iso(utcnow()), "related_ref": related_ref, "notes": privacy.redact(notes)})
+
     def add_email(self, message_id: str, related_ref: str, snippet: str = "") -> dict[str, Any]:
         snippet = privacy.redact(snippet)[:SNIPPET_MAX]
         return self.store.insert("evidence", {

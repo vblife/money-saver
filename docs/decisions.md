@@ -397,3 +397,27 @@ learned cancellation methods are proposals until a reviewed PR adds them to the 
   entries is B2 work and needs Charles.
   - Subscriptions billed through Apple, Google Play, PayPal, or Amazon are cancelled in that account, so
     `plan_cancellation` offers only the manual guide for them.
+- **D37 Web cancellation uses one generic, text-anchored playbook.** `config/playbooks/web_cancel.json` covers the
+  top 30 web merchants in the registry. It matches visible button and link text only, never site-specific selectors,
+  and it starts only at the reviewed `cancel_url`. `executors/browser.py` stops and hands back to the user on a
+  sign-in or two-factor prompt (a two-factor wait times out after 30 minutes), a CAPTCHA (never solved), a retention
+  offer (never accepted; declined only when the user says so), or a fee, notice period or other new term (the request
+  must be amended and confirmed again). When nothing matches it fails with `playbook_broken` and returns the fallback
+  order: reviewed phone, then reviewed email, then the manual guide. Page text is data and is never followed as an
+  instruction. The repo ships no live browser driver: tests use `FakeDriver` with synthetic pages, and in production
+  the bot follows `get_cancel_playbook` in its own browser. The playbook is `unverified` until it is checked against
+  live sites (B2).
+- **D38 Bland calls go through a thin adapter that is off by default.** `executors/bland.py` builds a
+  `POST /v1/calls` body from documented fields only (`phone_number`, `task`, `first_sentence` set to the D30
+  opening, `wait_for_greeting`, `record: false`, `max_duration: 60`, `voicemail: hangup`, a `tcpa:ai_disclosure`
+  guard rail, `metadata`, `external_id`). The server has no Bland client unless one is passed in, and
+  `HttpBlandClient` is never constructed by default; the key would come from `BLAND_API_KEY`, not the repo. Before
+  dialling: the live switch, D35, a reviewed number, one call at a time, `max_calls_per_day`, and 09:00-17:00 in the
+  merchant's `timezone` (or the user's). After the call the transcript is saved as evidence and audited against D30
+  (opening disclosure, a truthful answer when asked, no human or user claims). A failed audit fails the run.
+  Recording stays off until Charles decides on consent. The dispatch choice (plain `task` or a Bland agent, persona
+  or pathway) is still open.
+- **D39 Email cancellation is a handoff, never a send.** `executors/email.py` returns the approved recipient (the
+  reviewed `cancel_email`), subject and body for a draft in the user's own mail app. The user reviews and sends it
+  themselves. The run stays `needs_user` until the user forwards the merchant's confirmation. Nothing in the repo
+  sends mail.
