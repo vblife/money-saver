@@ -15,6 +15,8 @@ These rules apply to every coding agent (Grok Bot, Cursor, or any other) working
 - DB schema (Charles, 2026-10-22): money-saver is still in development and nothing consumes its data, so schema
   changes are made directly in `core/store.py` (`DDL`) in the PR that needs them. They are not migrations: no
   migration code, no version stamping, and no `[RISKY: DB migration]` flag (D15).
+  Only test or dev databases may be deleted and rebuilt after a schema change. Deleting, rebuilding, or resetting
+  the real `msb.db` in the bot's persistent directory still needs Charles's explicit approval.
 - Keep each PR to one change. Do not mix unrelated edits.
 - Do not post GitHub comments or replies unless the repo owner explicitly asked for that exact comment.
 

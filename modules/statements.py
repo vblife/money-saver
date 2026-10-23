@@ -32,8 +32,8 @@ from core.privacy import ForbiddenDataError
 from core.evidence import EvidenceStore
 from core.merchant_resolver import MerchantResolver, normalize_name
 from core.store import Store
-from modules.subscriptions import (EXPIRY_GRACE_DAYS, FIXED_EXPENSE_RX, INTERVAL_BANDS, PROTECTED_STATUSES,
-                                   SubscriptionInventory, _tz, add_period, infer_period, monthly_equiv)
+from modules.subscriptions import (EXPIRY_GRACE_DAYS, INTERVAL_BANDS, PROTECTED_STATUSES, SubscriptionInventory,
+                                   _tz, add_period, infer_period, looks_like_fixed_expense, monthly_equiv)
 from core.util import utcnow
 
 MAX_BYTES = 10 * 1024 * 1024
@@ -42,13 +42,31 @@ PDFTOTEXT_TIMEOUT_S = 30
 SUBSCRIPTION_CATEGORIES_EXCLUDED = {"retail", "food_delivery"}  # one-off purchases unless a keyword says otherwise
 KEYWORDS = re.compile(r"\b(subscription|subscr|membership|member fee|monthly|annual fee|recurring|renewal|prime)\b", re.I)
 AMOUNT_TOLERANCE = 0.10
-# Card payments and credits by their descriptor. These lines are never charges, whatever their sign, and their
-# sign tells which convention a single-amount CSV uses (D26). Bare "credit" is not matched ("credit monitoring"
-# is a real subscription).
+# Card payments and credits by their descriptor (D26). These lines are never charges, whatever their sign, and their
+# sign tells which convention a single-amount CSV uses. The rules are precise on purpose: a merchant descriptor
+# that merely contains PMT or PAYMENT ("GOOGLE *YOUTUBE PMT", "SPOTIFY PAYMENT") is a charge, not a card payment.
+# Bare "credit" is not matched either ("credit monitoring" is a real subscription).
+_PAY = r"(?:payments?|pymts?|pmts?)"
 PAYMENT_RX = re.compile(
-    r"\b(?:autopay|auto[\s-]?pay|automatic\s+payment|payments?|pymt|pmt|thank\s+you|"
+    r"\b(?:autopay|auto[\s-]?pay(?:ment)?|automatic\s+" + _PAY + r"|thank\s+you|"
+    r"(?:online|mobile|web|internet|electronic|phone|ach|bank|e)[\s-]?" + _PAY + r"|epay(?:ment)?|"
+    r"(?:credit\s+card|card|cc|loan|mortgage|auto\s+loan|student\s+loan)\s+" + _PAY + r"|"
+    + _PAY + r"\s+(?:received|recvd|rcvd|posted|thank)|"
     r"refund|return(?:ed)?\s+(?:item|merchandise|purchase)|statement\s+credit|credit\s+(?:adj\w*|voucher|balance)|"
     r"cash\s*back\s+(?:reward|redemption)\w*)\b", re.I)
+# A line that is nothing but payment words, reference digits and punctuation ("PAYMENT", "PMT 0412 REF 77").
+_PAYMENT_ONLY_RX = re.compile(r"^(?:\W|\d|\b(?:" + _PAY + r"|ref|conf|no|id)\b)*$", re.I)
+
+
+def is_payment_descriptor(desc: str) -> bool:
+    """A card/loan payment or a credit (D26). Lines billed through a merchant or aggregator prefix (PAYPAL *,
+    GOOGLE *, APPLE.COM/BILL, ...) are charges unless they say refund or credit."""
+    text = desc or ""
+    if any(rx.match(text) for rx, _ in PREFIXES):
+        return bool(re.search(r"\b(?:refund|statement\s+credit)\b", text, re.I))
+    return bool(PAYMENT_RX.search(text) or (text.strip() and _PAYMENT_ONLY_RX.match(text.strip())))
+
+
 # Billing-aggregator / processor prefixes in descriptors -> (billing_channel, keep-the-rest-as-merchant-text)
 PREFIXES = [
     (re.compile(r"^\s*paypal\s*\*\s*(?P<rest>.+)$", re.I), "paypal"),
@@ -145,7 +163,7 @@ def parse_pdf_text(text: str, default_year: int) -> list[dict[str, Any]]:
         amt = _cents(m["amt"])
         if d is None or amt is None:
             continue
-        if m["cr"] or PAYMENT_RX.search(m["desc"]):
+        if m["cr"] or is_payment_descriptor(m["desc"]):
             amt = -abs(amt)
         out.append({"date": d, "description": m["desc"].strip(), "amount_cents": amt, "card_last4": None})
     return out
@@ -209,7 +227,7 @@ def parse_csv_text(text: str, default_year: int) -> list[dict[str, Any]]:
         for p in parsed:
             p["amount_cents"] = -p["amount_cents"]
     for p in parsed:
-        if p.get("type") in CREDIT_TYPES or PAYMENT_RX.search(p["description"]):
+        if p.get("type") in CREDIT_TYPES or is_payment_descriptor(p["description"]):
             p["amount_cents"] = -abs(p["amount_cents"])
         p.pop("type", None)
     return parsed
@@ -230,9 +248,9 @@ def _purchases_are_negative(parsed: list[dict[str, Any]]) -> bool:
     typed = [p["amount_cents"] < 0 for p in parsed if p.get("type") in SALE_TYPES and p["amount_cents"]]
     if typed:
         return all(typed)
-    credits = [p["amount_cents"] > 0 for p in parsed if (p.get("type") in CREDIT_TYPES or PAYMENT_RX.search(p["description"]))
+    credits = [p["amount_cents"] > 0 for p in parsed if (p.get("type") in CREDIT_TYPES or is_payment_descriptor(p["description"]))
                and p["amount_cents"]]
-    rest = [p["amount_cents"] < 0 for p in parsed if not PAYMENT_RX.search(p["description"]) and p["amount_cents"]]
+    rest = [p["amount_cents"] < 0 for p in parsed if not is_payment_descriptor(p["description"]) and p["amount_cents"]]
     if credits and not any(credits):
         return False
     if credits and all(credits):
@@ -291,7 +309,7 @@ class StatementImporter:
         known_sub = bool(m) and m.get("category") not in SUBSCRIPTION_CATEGORIES_EXCLUDED
         return {"merchant_id": merchant_id, "channel": channel, "known_subscription_merchant": known_sub,
                 "keyword": bool(KEYWORDS.search(desc)), "key": descriptor_key(desc),
-                "fixed_expense": not merchant_id and bool(FIXED_EXPENSE_RX.search(desc))}
+                "fixed_expense": not merchant_id and looks_like_fixed_expense(desc)}
 
     def select_recurring(self, lines: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
         charges = [dict(line, **self.classify_line(line["description"])) for line in lines if line["amount_cents"] > 0]

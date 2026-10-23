@@ -447,10 +447,24 @@ FIXED_EXPENSE_RX = re.compile(
     r"hoa|homeowners?\s+assoc\w*|condo(?:minium)?\s+assoc\w*|landlord|leasing\s+office|mortgage)\b", re.I)
 
 
+# Strong subscription signals win over rent/mortgage wording ("APARTMENTS.COM PREMIUM subscription" is a
+# subscription). "monthly" and "recurring" are not strong: "MONTHLY RENT" is still rent.
+STRONG_SUBSCRIPTION_RX = re.compile(r"\b(?:subscriptions?|subscr|membership|premium)\b", re.I)
+# A web/SaaS merchant's domain is a brand, not rent wording: "APARTMENTS.COM" is a listings site, not an apartment.
+_DOMAIN_RX = re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.(?:com|net|org|io|co|app|ai)\b", re.I)
+
+
+def looks_like_fixed_expense(text: str | None) -> bool:
+    """Rent, HOA, property management or mortgage wording, unless a strong subscription signal is present."""
+    if not text or STRONG_SUBSCRIPTION_RX.search(text):
+        return False
+    return bool(FIXED_EXPENSE_RX.search(_DOMAIN_RX.sub(" ", text)))
+
+
 def is_fixed_expense(sub: dict[str, Any]) -> bool:
     """True for a statement-only row with no registry merchant whose name looks like rent, HOA or a mortgage."""
     return (not sub.get("merchant_id") and "card_statement" in (sub.get("source") or [])
-            and bool(FIXED_EXPENSE_RX.search(sub.get("display_name") or "")))
+            and looks_like_fixed_expense(sub.get("display_name")))
 
 
 LIST_HIDDEN = ("cancelled", "expired", "ignored")
@@ -463,16 +477,18 @@ def list_subscriptions(store: Store, include_inactive: bool = False) -> dict[str
     subs = store.find("subscriptions")
     if not include_inactive:
         subs = [s for s in subs if s["status"] not in LIST_HIDDEN]
-    subs.sort(key=lambda s: (-(s.get("monthly_equiv_cents") or 0), s["display_name"]))
     for s in subs:
         charges = sorted(store.find("charges", {"subscription_id": s["id"]}), key=lambda c: c["date"])
         s["charge_count"] = len(charges)
         s["recent_charges"] = [{"date": c["date"], "amount_cents": c["amount_cents"]} for c in charges[-3:]]
         s["not_a_subscription"] = is_fixed_expense(s)
+    # Real subscriptions first (largest first); fixed expenses that are not subscriptions always sort after them.
+    subs.sort(key=lambda s: (s["not_a_subscription"], -(s.get("monthly_equiv_cents") or 0), s["display_name"]))
     counted = [s for s in subs if s["status"] in ("active", "trial") and s.get("monthly_equiv_cents")
                and not s["not_a_subscription"]]
     total = sum(s["monthly_equiv_cents"] for s in counted if s["status"] == "active")
-    return {"subscriptions": subs, "monthly_total_cents": total, "annual_total_cents": total * 12,
+    return {"subscriptions": subs, "subscription_count": sum(1 for s in subs if not s["not_a_subscription"]),
+            "monthly_total_cents": total, "annual_total_cents": total * 12,
             "not_subscriptions": [s["id"] for s in subs if s["not_a_subscription"]],
             "unknown_amount": [s["id"] for s in subs if s.get("monthly_equiv_cents") is None],
             "needs_review": [s["id"] for s in subs if (s.get("confidence") or 0) < 0.6]}

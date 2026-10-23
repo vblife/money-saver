@@ -59,7 +59,8 @@ The `money-saver` MCP server is the system of record. Use its tools for every wr
 3. Tell the user how many lines were kept and that the rest of the statement was discarded. Statement-only
    subscriptions have low confidence until an email confirms them.
 4. Lines marked `not_a_subscription` (rent, HOA dues, mortgage) are regular fixed expenses. Present them as
-   such, never as subscriptions to cancel, and do not count them in subscription totals.
+   such, never as subscriptions to cancel, and do not count them in subscription totals or in the number of
+   subscriptions (`subscription_count`).
 5. If the import fails, say what the error says, including that nothing was imported and whether the upload
    was deleted.
 
