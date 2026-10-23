@@ -418,6 +418,10 @@ learned cancellation methods are proposals until a reviewed PR adds them to the 
   (opening disclosure, a truthful answer when asked, no human or user claims). A failed audit fails the run.
   Recording stays off until Charles decides on consent. The dispatch choice (plain `task` or a Bland agent, persona
   or pathway) is still open.
+- **D38a (pending Charles) Real Bland HTTP client.** `executors/bland_http.py` (`HttpBlandClient`) is the only code
+  that reads `BLAND_API_KEY` and sends it to api.bland.ai. Nothing constructs it: the server's `bland_client` stays
+  `None` until a deploy change passes one in, and all D35/D38 gates still apply. It merges only with Charles's
+  explicit approval (B3).
 - **D39 Email cancellation is a handoff, never a send.** `executors/email.py` returns the approved recipient (the
   reviewed `cancel_email`), subject and body for a draft in the user's own mail app. The user reviews and sends it
   themselves. The run stays `needs_user` until the user forwards the merchant's confirmation. Nothing in the repo
