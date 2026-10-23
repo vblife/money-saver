@@ -171,12 +171,18 @@ def new_confirmation_code() -> str:
 
 class ActionGate:
     def __init__(self, store: Store, now_fn: Callable[[], datetime] = utcnow,
-                 approval_ttl: timedelta | None = None):
+                 approval_ttl: timedelta | None = None, live_guard: Any = None):
+        """``live_guard`` enforces the live-execution gates (D33-D36, ``core/execution_policy.py``). The default reads
+        ``config/execution.json``, where every live channel is off."""
         if approval_ttl is not None and not (timedelta(0) < approval_ttl <= MAX_APPROVAL_TTL):
             raise ValueError(f"approval_ttl must be > 0 and <= {MAX_APPROVAL_TTL}")
         self.store = store
         self.now_fn = now_fn
         self._approval_ttl = approval_ttl
+        if live_guard is None:
+            from .execution_policy import LiveGuard  # local import: execution_policy imports GateError from here
+            live_guard = LiveGuard()
+        self.live_guard = live_guard
 
     # -- helpers ----------------------------------------------------------------------
     def _now(self) -> str:
@@ -308,6 +314,7 @@ class ActionGate:
             "history": [{"ts": to_iso(now), "from": None, "to": "pending_user", "note": "created"}],
         }
         self._validate(row)
+        self.live_guard.annotate(self.store, row)
         row.update(self._render(row, lang))
         return self.store.insert("action_requests", row)
 
@@ -379,6 +386,10 @@ class ActionGate:
                 raise InvalidTransitionError(f"action request {req['id']} is {req['status']}, not pending_user")
             self._check_live(req)
             self._require_bound(req)
+            if (req.get("constraints") or {}).get("first_live_cancel_merchant"):
+                raise GateError(f"action request {req['id']} is the first live cancellation for "
+                                f"{req['constraints']['first_live_cancel_merchant']}; it needs its own confirmation "
+                                "(D34), not a batch")
         codes = [r.get("confirmation_code") or "" for r in reqs]
         if not is_explicit_confirmation(user_message, codes):
             raise NotExplicitConfirmationError("the reply is not an explicit confirmation; ask again")
@@ -415,10 +426,11 @@ class ActionGate:
             raise InvalidTransitionError(f"cannot amend a {req['status']} request")
         merged = {**req, **changes}
         self._validate(merged)
+        self.live_guard.annotate(self.store, merged)
         rendered = self._render(merged, lang)
         fresh_expiry = to_iso(self.now_fn() + DEFAULT_TTL)
         reset = {"approved_at": None, "approved_by_message": None, "approval_source": None, "execute_by": None,
-                 "expires_at": fresh_expiry, **rendered, **changes}
+                 "expires_at": fresh_expiry, **rendered, **changes, "constraints": merged.get("constraints") or {}}
         if req["status"] == "approved":
             return self._transition(req, "pending_user", f"amended, needs re-confirmation: {reason}", **reset)
         history = list(req["history"]) + [{"ts": self._now(), "from": "pending_user", "to": "pending_user",
@@ -485,13 +497,17 @@ class ActionGate:
         if executor == "bland_call":
             self._check_call_script(req)
         existing = self.store.find("action_runs", {"action_request_id": request_id})
-        if existing:
-            run = existing[0]
-            if run["outcome"] == "needs_user" and run["finished_at"] is None:
-                return self.store.update("action_runs", run["id"], {"outcome": None})  # resume
+        if existing and not (existing[0]["outcome"] == "needs_user" and existing[0]["finished_at"] is None):
             raise InvalidTransitionError(f"action request {request_id} already has a run")
-        return self.store.insert("action_runs", {"action_request_id": request_id, "started_at": self._now(),
-                                                 "executor": executor, "log": []})
+        self.live_guard.check(self.store, req)  # D33-D36: live switch, first paid call, first live cancel, targets
+        with self.store.transaction():
+            if existing:
+                run = self.store.update("action_runs", existing[0]["id"], {"outcome": None})  # resume
+            else:
+                run = self.store.insert("action_runs", {"action_request_id": request_id, "started_at": self._now(),
+                                                        "executor": executor, "log": []})
+            self.live_guard.record(self.store, req, run)
+        return run
 
     def finish_execution(self, run_id: str, outcome: str, evidence_ids: list[str] | None = None,
                          error_code: str | None = None, log: list | None = None) -> dict[str, Any]:

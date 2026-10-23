@@ -75,7 +75,20 @@ def test_stdio_end_to_end(tmp_path):
                       source="chat:1")["structuredContent"]["request"]["status"] == "approved"
         wrong_channel = c.tool("start_action_run", request_id=rid, executor="email")
         assert wrong_channel["isError"] and "approved for 'browser'" in wrong_channel["content"][0]["text"]
-        run = c.tool("start_action_run", request_id=rid, executor="browser")["structuredContent"]["run"]
+        # D33: live browser execution is off by default, so a real browser run cannot start. Dry-run it instead,
+        # then switch the approved plan to the manual guide (a material change: the user confirms again).
+        live = c.tool("start_action_run", request_id=rid, executor="browser")
+        assert live["isError"] and "LiveExecutionDisabledError" in live["content"][0]["text"]
+        dry = c.tool("dry_run_action_request", request_id=rid)["structuredContent"]
+        assert dry["mode"] == "dry_run" and "live_disabled" in {b["code"] for b in dry["live_blockers"]}
+        assert c.tool("execution_status")["structuredContent"]["live"] == {"browser": False, "bland_call": False,
+                                                                          "email": False}
+        manual = c.tool("amend_action_request", request_id=rid, changes={"executor": "manual"},
+                        reason="live browser runs are off")["structuredContent"]
+        assert manual["request"]["status"] == "pending_user"
+        assert c.tool("confirm_action_request", request_id=rid,
+                      user_message=f"confirm {manual['confirmation_code']}")["structuredContent"]["request"]["status"] == "approved"
+        run = c.tool("start_action_run", request_id=rid, executor="manual")["structuredContent"]["run"]
         outside = tmp_path / "id_rsa"
         outside.write_text("PRIVATE KEY")
         stolen = c.tool("record_evidence", kind="screenshot", related_ref="sub_hulu", path=str(outside))

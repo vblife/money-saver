@@ -15,13 +15,18 @@ ACTION_LABELS = {
            "per_year": "per year", "channel": "How", "draft": "Exact text",
            "reply": "To approve, reply exactly: confirm {code}",
            "reply_batch": "To approve all of them, reply exactly: confirm {codes}",
-           "calling_as": ">> Calling on behalf of: {name}. The caller says up front that it is an AI assistant."},
+           "calling_as": ">> Calling on behalf of: {name}. The caller says up front that it is an AI assistant.",
+           "first_live": ">> First real cancellation with {merchant}: I have never cancelled a {merchant} subscription "
+                         "for you before. Confirming allows this one (D34).",
+           "target": "Cancel through (reviewed merchant list)"},
     "zh": {"confirm": "确认", "keep": "保留", "later": "稍后提醒", "cancel": "取消",
            "edit": "修改条件", "saving": "预计节省", "steps": "我将执行", "disclose": "将披露",
            "risks": "注意", "expires": "请求有效期至", "header": "请确认以下操作",
            "batch": "请确认以下 {n} 项操作", "per_year": "年化", "channel": "方式", "draft": "完整内容",
            "reply": "如需批准，请回复：确认 {code}", "reply_batch": "如需全部批准，请回复：确认 {codes}",
-           "calling_as": ">> 将以 {name} 的名义致电。来电一开始就会说明自己是 AI 助手。"},
+           "calling_as": ">> 将以 {name} 的名义致电。来电一开始就会说明自己是 AI 助手。",
+           "first_live": ">> 这是我第一次真实地为你取消 {merchant} 的订阅。确认即表示允许这一次（D34）。",
+           "target": "取消渠道（已审核的商家列表）"},
 }
 
 
@@ -49,10 +54,14 @@ def format_action_request(req: dict[str, Any], lang: str = "en") -> str:
     if req.get("executor") == "bland_call" and c.get("call_user_name"):
         # Shown first so the user sees whose behalf the call is on before anything else (review 5616377624).
         lines.append(L["calling_as"].format(name=c["call_user_name"]))
+    if c.get("first_live_cancel_merchant"):
+        lines.append(L["first_live"].format(merchant=c["first_live_cancel_merchant"]))
     lines += [f"• {req['summary']}", f"{L['steps']}:"]
     lines += [f"  {i}. {step}" for i, step in enumerate(req["plan_steps"], 1)]
     if req.get("executor"):
         lines.append(f"{L['channel']}: {CHANNELS.get(req['executor'], req['executor'])}")
+    if c.get("cancel_target"):
+        lines.append(f"{L['target']}: {c['cancel_target']}")
     if req.get("draft_content"):
         lines.append(f"{L['draft']}:")
         lines += [f"  | {line}" for line in req["draft_content"].splitlines()]
