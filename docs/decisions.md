@@ -121,8 +121,12 @@ Charles before any live cancellation.
   rebuild of `action_requests`, refusing newer or unrecognized files), which was removed together with its tests.
   - A schema change edits `DDL` directly in the PR that needs it. It is not a migration, needs no migration code or
     version bump, and is not flagged `[RISKY: DB migration]`.
-  - `CREATE TABLE IF NOT EXISTS` does not alter an existing table, so a dev database made by older code can be
-    missing new columns. Delete it (default `msb.db` under the bot's data directory) and let the store rebuild it.
+  - `CREATE TABLE IF NOT EXISTS` does not alter an existing table, so a database made by older code can be missing
+    new columns. Only a test or development database (a temporary directory, or a local file set with `MSB_DB` or
+    `MSB_HOME`) may be deleted and rebuilt. The real `msb.db` in the bot's persistent directory (default
+    `$MSB_HOME/data/msb.db`) is a production data path under `AGENTS.md`. Deleting, rebuilding, or resetting it
+    needs Charles's explicit approval, even in dev. No code deletes the database file: the store only creates
+    missing tables, and `delete_all_data` (PV-8) deletes rows only when the user types the confirmation phrase.
   - Gate safety does not depend on migrations: a request without a bound confirmation code and text can never be
     approved (`tests/test_action_gate.py`).
   - This holds while money-saver is in development with no consumers. Migrations come back only by a new decision
@@ -203,9 +207,12 @@ Charles before any live cancellation.
   malformed file) is a `StatementError` like any other parse error, so the D28 "upload was deleted" note applies.
   The inbox directories must be a list or tuple of path strings. A bare string is refused (iterating it would allow
   `/`, so any path), and so is the filesystem root.
-  - Payments and credits are found by descriptor (AUTOPAY, PAYMENT, PYMT, THANK YOU, REFUND, STATEMENT CREDIT, ...;
-    bare "credit" is not matched, because credit monitoring is a real subscription) or by a type column. They are
-    always dropped, whatever their sign.
+  - Payments and credits are found by descriptor or by a type column, and are always dropped, whatever their sign.
+    The descriptor match is precise: autopay, "thank you", "payment received", card/credit card/loan/mortgage
+    payment, online/mobile/ACH/e-payment, a line that is only payment words and reference numbers, refunds and
+    statement credits. A merchant name followed by PMT or PAYMENT ("GOOGLE *YOUTUBE PMT", "SPOTIFY PAYMENT") is a
+    charge, and a line with a billing-channel prefix (D29) is a charge unless it says refund or statement credit.
+    Bare "credit" is not matched, because credit monitoring is a real subscription.
   - Sign convention of a single amount column, never by majority vote: a type column decides from its sale rows;
     else the payment lines decide (negative payments: the usual convention; positive payments: purchases are
     negative, unless every other line is positive too); else purchases are negative only if every line is.
@@ -220,8 +227,11 @@ Charles before any live cancellation.
   once per statement is only caught when two or more months are uploaded, or through its wording.
   Rent, HOA dues, property management, and mortgage lines with no registry merchant repeat like subscriptions, so
   they are kept, but they are labelled "not a subscription" in the import result and in `list_subscriptions`
-  (`not_a_subscription`, `not_subscriptions`). They are left out of the totals and price-change reports, and get
-  confidence 0.3.
+  (`not_a_subscription`, `not_subscriptions`). They are left out of the totals, the subscription count
+  (`subscription_count`, the N in "Your subscriptions (N)") and price-change reports, sort after every real
+  subscription, are shown in their own "Not subscriptions" section, and get confidence 0.3. Strong subscription
+  wording (subscription, membership, premium) overrides rent wording, and a web domain is a brand, not rent
+  wording, so "APARTMENTS.COM PREMIUM subscription" is a subscription. "Monthly" or "recurring" do not override it.
 - **D28 Original file.** The upload is deleted right after it is read, by default, even if parsing then fails, and
   the result or error says so. `keep_original: true` keeps it.
 - **D29 Linking.** PayPal/Apple/Google/Amazon descriptor prefixes set the billing channel. A charge links to the

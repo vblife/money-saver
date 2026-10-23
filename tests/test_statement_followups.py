@@ -262,7 +262,8 @@ def test_rent_is_kept_but_labelled_not_a_subscription(importer, store, inbox):
     assert spotify["not_a_subscription"] is False
     assert listing["monthly_total_cents"] == spotify["monthly_equiv_cents"]   # rent not in the total
     text = format_subscription_list(listing, "en")
-    assert "not a subscription" in text and "$21" not in text.splitlines()[-1]
+    total_line = next(line for line in text.splitlines() if line.startswith("Active total"))
+    assert "Not subscriptions" in text and "$21" not in total_line
     assert "不是订阅" in format_subscription_list(listing, "zh")
 
 
