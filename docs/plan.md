@@ -52,6 +52,16 @@ Charles approved enabling R1, R3, R4, and R10 by default on 2026-10-22 (M1b, D31
    truthful if asked, never claims to be human; post-call transcript audits for these rules), email-cancel drafts handed to the user's approval flow (FR-1-12), evidence and 48-hour
    confirmation watch -> `cancel_unconfirmed` (FR-1-13), manual fallback guide (FR-1-14), post-charge check
    (FR-1-15), ledger entries per the 5.1 savings rules. All executors subclass `GuardedExecutor`; tests use fakes.
+   Split into stacked PRs (D32-D36):
+   - **M1d-1 execution core:** live switches in `config/execution.json` (all off), `LiveGuard` in
+     `begin_execution`, the first-live-cancel flag per merchant, Charles's first-paid-call approval, reviewed-only
+     targets, Q11 proposals (`merchant_method_proposals`), and the `plan_cancellation`, `dry_run_action_request`,
+     `manual_cancel_guide` (FR-1-14), and `execution_status` tools.
+   - **M1d-2 executors:** the browser playbook runner with a fake driver and recorded pages (FR-1-10), the Bland
+     adapter with a fake client, call limits, and the transcript audit (FR-1-11), and the email handoff (FR-1-12).
+   - **M1d-3 after the run:** subscription status, ledger entry `cancel:<sub_id>`, the 48-hour confirmation watch
+     (FR-1-13), and the post-charge check with a refund request (FR-1-15). These are tools only; there are no new
+     routines.
 
 **Acceptance criteria (spec 12)**
 | Criterion | How it will be checked |

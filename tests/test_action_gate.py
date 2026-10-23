@@ -12,6 +12,8 @@ from core.privacy import ForbiddenDataError
 from core.store import Store
 from executors.base import GuardedExecutor
 
+from conftest import GateMechanicsGuard
+
 DRAFT = "Hello, I am an AI assistant calling on behalf of Alex to cancel the subscription."
 # Call scripts must be built by core.call_policy (D30) for the name in constraints.call_user_name.
 CALL_DRAFT = build_call_script("Alex", ["Ask to cancel the subscription on this account.",
@@ -336,7 +338,7 @@ def test_approval_expires_after_default_ttl(gate, clock):
 
 def test_approval_ttl_is_configurable(store, clock):
     store.update_user({"approved_pii_fields": [], "thresholds": {"approval_ttl_hours": 2}})
-    g = ActionGate(store, now_fn=clock)
+    g = ActionGate(store, now_fn=clock, live_guard=GateMechanicsGuard())
     req = ok(g, make(g))
     clock.advance(hours=1)
     assert g.begin_execution(req["id"], "browser")

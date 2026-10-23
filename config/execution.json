@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "note": "Live execution switches (D33, D35). Every switch is OFF. Turning one on, or recording Charles's approval of the first paid Bland call, is deploy config: it may only change in a pull request marked [RISKY] that Charles approves and Reviewer merges. Unknown keys or non-boolean values make the whole file fail closed (everything stays off).",
+  "live": {
+    "browser": false,
+    "bland_call": false,
+    "email": false
+  },
+  "bland_first_paid_call_approval": null
+}

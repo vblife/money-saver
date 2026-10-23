@@ -53,6 +53,8 @@ TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "action_runs": ("run", ("log", "evidence_ids")),
     "evidence": ("evd", ()),
     "savings_ledger": ("led", ("evidence_ids",)),
+    "live_runs": ("lvr", ()),
+    "merchant_method_proposals": ("mmp", ("steps", "source_urls")),
 }
 
 DDL = """
@@ -196,6 +198,24 @@ CREATE TABLE IF NOT EXISTS savings_ledger (
   verification_ref TEXT, evidence_ids TEXT NOT NULL DEFAULT '[]', source_ref TEXT NOT NULL, action_run_id TEXT,
   dedupe_key TEXT NOT NULL UNIQUE, reverses_id TEXT, occurred_at TEXT NOT NULL, verified_at TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+
+-- D33-D35: one row per action run that started on a live channel (browser, bland_call, email). Used for the
+-- first-live-cancellation-per-merchant and first-paid-call gates.
+CREATE TABLE IF NOT EXISTS live_runs (
+  id TEXT PRIMARY KEY, action_request_id TEXT NOT NULL UNIQUE REFERENCES action_requests(id),
+  run_id TEXT NOT NULL REFERENCES action_runs(id),
+  executor TEXT NOT NULL CHECK (executor IN ('browser','bland_call','email')), action_type TEXT NOT NULL,
+  merchant_id TEXT, started_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+
+-- Q11 / D32: cancellation methods the bot learned at runtime. Proposals only: they are never read by the execution
+-- gates and become live only through a reviewed PR to config/merchant_registry.json.
+CREATE TABLE IF NOT EXISTS merchant_method_proposals (
+  id TEXT PRIMARY KEY, merchant_id TEXT, merchant_name TEXT NOT NULL,
+  method TEXT NOT NULL CHECK (method IN ('web','phone','email','chat','app_store','google_play','other')),
+  cancel_url TEXT, support_phone TEXT, cancel_email TEXT, steps TEXT NOT NULL DEFAULT '[]',
+  source_urls TEXT NOT NULL DEFAULT '[]', observed_ref TEXT, notes TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','exported','withdrawn')),
+  dedupe_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_ar_status ON action_requests(status);
 CREATE INDEX IF NOT EXISTS idx_led_status ON savings_ledger(status, occurred_at);

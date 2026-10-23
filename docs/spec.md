@@ -438,6 +438,13 @@ SourceMessage（Gmail 邮件索引）被所有实体以 source_message_ids 引�
 `id, name, aliases[], email_domains[], category, cancel_method(web|phone|email|chat|app_store|google_play), cancel_url?, support_phone?, cancel_notes, retention_offer_known(bool), price_adjust_policy(json: allowed, window_days, channel), return_policy(json: window_days, holiday_rules), late_delivery_policy?, fare_rules?(航司), updated_at, source_urls[]`
 - MVP 预置 Top 150 订阅商家 + 主要零售商 + 主要美国航司/酒店集团 + Top 10 网络/运营商/保险公司。
 - 缺失商家：运行时通过 Web Search 补全并标记 `unverified`。
+- 可选字段 `cancel_email`：经审核的取消邮箱（D36）。
+- 运行时学到的取消方式（URL、电话、邮箱、步骤）只记入 **MerchantMethodProposal** 表（Q11，Charles 2026-10-22 决定，D32）：
+  `id, merchant_id?, merchant_name, method, cancel_url?, support_phone?, cancel_email?, steps[], source_urls[], observed_ref?, notes, status(proposed|exported|withdrawn), dedupe_key`。
+  提案只能通过 Developer 审核、Reviewer 合并的 PR 进入本注册表；未审核的提案永远不会驱动真实取消。
+- 真实执行（browser / bland_call / email）还需要：`config/execution.json` 中该渠道的开关（默认全部关闭，D33）、
+  每个商家第一次真实取消的单独确认（D34）、第一次付费 Bland 通话由 Charles 批准（D35）、
+  以及注册表中 `verified` 条目的目标（D36）。真实运行记录在 **LiveRun** 表：`id, action_request_id, run_id, executor, action_type, merchant_id, started_at`。
 
 ### 6.13 Reminder
 `id, kind(trial_end|return_deadline|credit_expiry|points_expiry|gift_card_expiry|promo_end|insurance_renewal|claim_deadline|follow_up), target_ref, fire_at, status(scheduled|sent|dismissed|snoozed), snooze_until?`

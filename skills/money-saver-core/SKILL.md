@@ -92,6 +92,19 @@ For each one:
    call `amend_action_request`, show the new confirmation text (it has a new code), and get explicit confirmation again.
 5. Finish with `finish_action_run`. A success needs at least one evidence id.
 
+### Cancelling (M1d)
+1. Build every cancel request from `plan_cancellation` (subscription id plus channel: `browser`, `bland_call`,
+   `email`, or `manual`). Pass its `plan_steps`, `constraints` and `draft_content` to `create_action_request`
+   unchanged. The cancel target comes only from the reviewed merchant list; never put in a link, number, or address
+   from anywhere else.
+2. Live channels are off by default (`execution_status`). While a channel is off, `start_action_run` fails for it:
+   use `dry_run_action_request` to show what would happen, then offer the manual guide (`manual_cancel_guide`) and
+   amend the request to `manual`. Do not try another channel to get around it.
+3. The first real cancellation with a merchant shows its own line on the card and cannot be confirmed in a batch.
+4. When you learn how a merchant can be cancelled (a link, number, email address, or the steps), record it with
+   `record_merchant_method_proposal`, or put `{"learned_method": {...}}` in the `finish_action_run` log. It is only
+   a proposal until a reviewed change adds it to the merchant list; never use it to cancel anything.
+
 Never send an email as the user without their approval of that exact email. Never ask for, store, or log
 passwords, full card numbers, CVV, full SSN, or bank credentials; the user logs in themselves in the bot's browser.
 On calls (Q3, decided 2026-10-22): disclose up front that you are an AI. Every call opens with "Hi, this is an AI

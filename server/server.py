@@ -21,12 +21,15 @@ sys.path.insert(0, ROOT)
 from core import call_policy, gmail_scanner, notifier  # noqa: E402
 from core.action_gate import ACTION_TYPES, EXECUTORS, RUN_OUTCOMES, ActionGate, GateError, sha256_text  # noqa: E402
 from core.classifier import CATEGORIES, Classifier  # noqa: E402
+from core.execution_policy import LiveGuard  # noqa: E402
 from core.evidence import KINDS as EVIDENCE_KINDS, EvidencePathError, EvidenceStore  # noqa: E402
 from core.ledger import MODULES, Ledger, LedgerError  # noqa: E402
 from core.merchant_resolver import MerchantResolver  # noqa: E402
 from core.privacy import ForbiddenDataError  # noqa: E402
 from core.store import USER_FIELDS, Store  # noqa: E402
-from modules import duplicates as dup_mod, subscriptions as subs_mod  # noqa: E402
+from modules import cancellation, duplicates as dup_mod, subscriptions as subs_mod  # noqa: E402
+from modules.merchant_proposals import METHODS as PROPOSAL_METHODS, STATUSES as PROPOSAL_STATUSES  # noqa: E402
+from modules.merchant_proposals import MerchantProposals  # noqa: E402
 from modules.statements import StatementError, StatementImporter  # noqa: E402
 from modules.trials import CHOICES as TRIAL_CHOICES, Trials  # noqa: E402
 from routines import r1_daily_scan, r3_reminder_dispatch, r4_trial_guard, r10_expiry  # noqa: E402
@@ -153,12 +156,40 @@ TOOLS = [
      "description": "Material plan change (new disclosure, a fee, switching to phone). Clears any approval; the user must confirm again.",
      "inputSchema": O({"request_id": S, "changes": {"type": "object"}, "reason": S}, ["request_id", "changes", "reason"])},
     {"name": "start_action_run", "title": "Start executing an approved request",
-     "description": "Call immediately before acting. Fails unless the request is approved and outside its revoke window.",
+     "description": "Call immediately before acting. Fails unless the request is approved and outside its revoke window. Browser, call and email runs are live actions and also need the live switch for that channel (off by default, D33), a reviewed registry target (D36), the first-live-cancel confirmation for the merchant (D34) and, for the first paid call, Charles's approval (D35); otherwise use dry_run_action_request or the manual guide.",
      "inputSchema": O({"request_id": S, "executor": {"type": "string", "enum": list(EXECUTORS)}}, ["request_id", "executor"])},
     {"name": "finish_action_run", "title": "Finish an action run",
-     "description": "Record the outcome. success/partial require at least one evidence id.",
+     "description": "Record the outcome. success/partial require at least one evidence id. Log items shaped {\"learned_method\": {merchant_id, merchant_name, method, cancel_url, support_phone, cancel_email, steps, source_urls, notes}} are saved as merchant method proposals (Q11/D32).",
      "inputSchema": O({"run_id": S, "outcome": {"type": "string", "enum": list(RUN_OUTCOMES)}, "evidence_ids": ARR_S,
                        "error_code": S, "log": {"type": "array"}}, ["run_id", "outcome"])},
+    {"name": "execution_status", "title": "Live execution status",
+     "description": "Which channels may act for real (config/execution.json, all off by default, D33), whether Charles approved the first paid Bland call (D35), and whether one was placed. Read-only.",
+     "inputSchema": O({}), "annotations": RO},
+    {"name": "plan_cancellation", "title": "Plan a cancellation",
+     "description": "Build the plan for create_action_request(action_type='cancel_subscription'): steps, the reviewed cancel target from the merchant registry (never a proposal, D32/D36), constraints, a draft for email, identity-free task steps for build_call_script, live blockers, and the manual guide. Acts on nothing.",
+     "inputSchema": O({"subscription_id": S, "executor": {"type": "string", "enum": list(cancellation.CANCEL_EXECUTORS)},
+                       "lang": {"type": "string", "enum": ["en", "zh"]}}, ["subscription_id", "executor"]), "annotations": RO},
+    {"name": "dry_run_action_request", "title": "Dry-run an action request",
+     "description": "Show what a run would do and every reason it could not start live now. Starts no run and touches nothing external.",
+     "inputSchema": O({"request_id": S}, ["request_id"]), "annotations": RO},
+    {"name": "manual_cancel_guide", "title": "Manual cancellation guide",
+     "description": "FR-1-14: steps, link, phone and talking points so the user can cancel themselves. Reviewed merchant registry only.",
+     "inputSchema": O({"subscription_id": S, "lang": {"type": "string", "enum": ["en", "zh"]}}, ["subscription_id"]), "annotations": RO},
+    {"name": "record_merchant_method_proposal", "title": "Record a learned cancellation method",
+     "description": "Q11/D32: store a cancellation method the bot learned (URL, phone, email, steps) as a proposal, separate from the reviewed merchant registry. Proposals never drive a cancellation; they reach the registry only through a reviewed PR.",
+     "inputSchema": O({"merchant_id": S, "merchant_name": S, "method": {"type": "string", "enum": list(PROPOSAL_METHODS)},
+                       "cancel_url": S, "support_phone": {"type": "string", "description": "E.164, e.g. +18005551234"},
+                       "cancel_email": S, "steps": ARR_S, "source_urls": ARR_S, "observed_ref": S, "notes": S},
+                      ["method"])},
+    {"name": "list_merchant_method_proposals", "title": "List learned cancellation methods",
+     "description": "Proposals recorded under Q11/D32, newest last. Not part of the reviewed merchant list.",
+     "inputSchema": O({"status": {"type": "string", "enum": list(PROPOSAL_STATUSES)}, "merchant_id": S}), "annotations": RO},
+    {"name": "export_merchant_method_proposals", "title": "Export proposals for a registry PR",
+     "description": "JSON for Developer's merchant-registry pull request (Developer reviews, Reviewer merges). Marks them exported; changes nothing in the registry.",
+     "inputSchema": O({"proposal_ids": ARR_S})},
+    {"name": "withdraw_merchant_method_proposal", "title": "Withdraw a proposal",
+     "description": "Mark a proposal withdrawn (for example it turned out to be wrong).",
+     "inputSchema": O({"proposal_id": S}, ["proposal_id"])},
     {"name": "record_evidence", "title": "Record evidence",
      "description": "Store evidence: a file path (screenshot, transcript, receipt; must be a regular file inside the evidence inbox, $MSB_HOME/inbox by default; symlinks are rejected), a Gmail message id (confirmation_email), or a reference (call_recording_url, statement_line).",
      "inputSchema": O({"kind": {"type": "string", "enum": list(EVIDENCE_KINDS)}, "related_ref": S, "path": S,
@@ -201,9 +232,11 @@ TOOLS = [
 
 
 class App:
-    def __init__(self, db_path=None, evidence_dir=None, evidence_inbox=None):
+    def __init__(self, db_path=None, evidence_dir=None, evidence_inbox=None, live_guard=None):
         self.store = Store(db_path)
-        self.gate = ActionGate(self.store)
+        self.live_guard = live_guard or LiveGuard()  # reads config/execution.json; all channels off by default
+        self.gate = ActionGate(self.store, live_guard=self.live_guard)
+        self.proposals = MerchantProposals(self.store, self.live_guard.registry)
         self.ledger = Ledger(self.store)
         self.evidence = EvidenceStore(self.store, evidence_dir, evidence_inbox)
         self.resolver = MerchantResolver()
@@ -318,8 +351,28 @@ class App:
         if name == "start_action_run":
             return {"run": gate.begin_execution(a["request_id"], a["executor"])}
         if name == "finish_action_run":
-            return {"run": gate.finish_execution(a["run_id"], a["outcome"], a.get("evidence_ids"),
-                                                 a.get("error_code"), a.get("log"))}
+            run = gate.finish_execution(a["run_id"], a["outcome"], a.get("evidence_ids"), a.get("error_code"), a.get("log"))
+            saved, errors = self.proposals.record_from_log(a.get("log"), a["run_id"])
+            out = {"run": run}
+            if saved or errors:
+                out.update(proposals_recorded=saved, proposal_errors=errors)
+            return out
+        if name == "execution_status":
+            return self.live_guard.status(st)
+        if name == "plan_cancellation":
+            return cancellation.plan_cancellation(st, self.live_guard, a["subscription_id"], a["executor"], a.get("lang", "en"))
+        if name == "dry_run_action_request":
+            return cancellation.dry_run(st, self.live_guard, gate.get(a["request_id"]))
+        if name == "manual_cancel_guide":
+            return cancellation.manual_guide(st, self.live_guard.registry, a["subscription_id"], a.get("lang", "en"))
+        if name == "record_merchant_method_proposal":
+            return {"proposal": self.proposals.record(**a)}
+        if name == "list_merchant_method_proposals":
+            return {"proposals": self.proposals.list(a.get("status"), a.get("merchant_id"))}
+        if name == "export_merchant_method_proposals":
+            return self.proposals.export(a.get("proposal_ids"))
+        if name == "withdraw_merchant_method_proposal":
+            return {"proposal": self.proposals.withdraw(a["proposal_id"])}
         if name == "record_evidence":
             kind, ref = a["kind"], a["related_ref"]
             if kind == "confirmation_email":

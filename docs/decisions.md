@@ -14,12 +14,12 @@
 | Q8 | Label processed Gmail threads? | Off by default, opt-in | `notification_prefs.gmail_labels = false` | No |
 | Q9 | Call recording retention | 90 days; transcript summaries kept as evidence (deletable) | M1 evidence retention job | No |
 | Q10 | Count points/miles/travel credit in "you saved $X"? | No; listed separately | `Ledger.month_summary`, `notifier.format_month_headline` | No |
-| Q11 | Who maintains merchant_registry? Review runtime additions? | Developer Bot maintains the top 150; runtime additions are `unverified` and need an extra warning before execution | `verification` field; every M0 seed entry is `unverified` and has no phone number | No for M0. For M1, verified cancel URLs/playbooks need checking against official pages (see B2) |
+| Q11 | Who maintains merchant_registry? Review runtime additions? | **Decided by Charles, 2026-10-22 (D32).** The bot auto-records the cancellation methods it learns (URL, phone, email, steps) as proposals, stored apart from the reviewed registry. They join the reviewed list only through a PR that Developer reviews and Reviewer merges. Unreviewed proposals never drive a live cancellation | `merchant_method_proposals` table, `modules/merchant_proposals.py`, `core/execution_policy.py` | No. Live cancels also need a `verified` registry entry (D36, B2) |
 | Q12 | Licensed agent for insurance quotes? | No; only point to official comparison/insurer sites, never fill licensed flows | M5 | No |
 
 **Result:** none of the 12 questions blocks M0 or M1 with the defaults above. Q3 was resolved by Charles on
-2026-10-22 (D30): calls disclose up front that the caller is an AI. Q11 is still open and must be confirmed by
-Charles before any live cancellation.
+2026-10-22 (D30): calls disclose up front that the caller is an AI. Q11 was decided by Charles on 2026-10-22 (D32):
+learned cancellation methods are proposals until a reviewed PR adds them to the registry.
 
 ## Blockers for M1 acceptance (not in spec 13)
 - **B1 - real labelled samples.** M1 recall/precision (>= 90% / >= 85%) is defined on human-labelled samples. The repo
@@ -360,5 +360,40 @@ Charles before any live cancellation.
   user), is a business and legal question for M1d. Until Charles decides, it fails closed: task steps with those
   terms are rejected (`IDENTITY_TOPIC`, D30), and the identity block only ever says "calling on behalf of
   <user>".
-- **Still open or deferred.** Q11 (who maintains the merchant registry) is still open. The accuracy test with real
-  labeled emails (B1) is deferred.
+- **Still open or deferred.** Q11 was decided on 2026-10-22 (D32). The accuracy test with real labeled emails (B1)
+  is deferred.
+
+## Engineering decisions (M1d: cancellation execution)
+- **D32 Learned merchant methods are proposals (Q11, decided by Charles 2026-10-22).** The bot records every
+  cancellation method it learns (cancel URL, phone number, cancel email address, steps, source URLs) as a row in
+  `merchant_method_proposals`, never in `config/merchant_registry.json`.
+  - It records them with `record_merchant_method_proposal`, or automatically from `finish_action_run` log items
+    shaped `{"learned_method": {...}}`. Values are validated (https URLs, E.164 phone numbers, email addresses, at
+    most 20 steps of 300 characters) and deduplicated.
+  - `export_merchant_method_proposals` returns a JSON document with the current registry values beside each
+    proposal. Developer turns it into a registry PR; Reviewer merges it. Exporting changes nothing in the registry.
+  - Nothing in the execution path reads the table. `core/execution_policy.py`, `modules/cancellation.py`, and the
+    trial auto-cancel take targets only from the reviewed registry. A test checks the sources for this.
+- **D33 Live execution is off by default.** `config/execution.json` has one switch per live channel (`browser`,
+  `bland_call`, `email`); all are `false`. `ActionGate.begin_execution` (so also `start_action_run`) refuses to start a
+  run on a channel that is off, whatever the user approved. The bot can still plan, dry-run
+  (`dry_run_action_request`), and hand over the manual guide. `manual` runs are not live and are not affected.
+  - The file is parsed strictly. Unknown keys, a non-boolean switch, a bad approval record, or an unreadable file
+    turn every channel off. There is no environment-variable or command-line override.
+  - Turning a switch on is deploy config: a PR marked [RISKY] that Charles approves and Reviewer merges.
+- **D34 The first live cancellation per merchant needs its own approval.** Until a live run for a merchant has ended in
+  `success`, a cancel request for it carries `constraints.first_live_cancel_merchant`. The gate sets the flag on
+  create and amend and ignores any caller-supplied value. The confirmation card shows a line saying this is the first
+  real cancellation with that merchant. Such a request cannot be approved in a batch, and a live run without the
+  flag is refused. Live runs are logged in `live_runs`.
+- **D35 The first paid Bland call needs Charles.** No live `bland_call` run starts until
+  `bland_first_paid_call_approval` in `config/execution.json` holds `{approved_by: "Charles", approved_on, reference}`
+  (a [RISKY] PR). After one live call is logged, later calls need only the user's per-call approval. D30 is
+  unchanged.
+- **D36 Live targets come only from reviewed, verified registry entries.** A live cancel run needs a registry entry
+  marked `verified` with a valid target for the channel (`cancel_url`, `support_phone`, or the new optional
+  `cancel_email`). The request must name that exact target in `constraints.cancel_target`; `plan_cancellation` fills
+  it in. Every shipped entry is still `unverified`, so nothing can run live today even with a switch on; verifying
+  entries is B2 work and needs Charles.
+  - Subscriptions billed through Apple, Google Play, PayPal, or Amazon are cancelled in that account, so
+    `plan_cancellation` offers only the manual guide for them.
