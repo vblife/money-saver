@@ -21,6 +21,9 @@ fails closed. This module places no calls.
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import codecs
 import json
 import os
 import re
@@ -163,9 +166,29 @@ def fold(text: str) -> str:
     return unicodedata.normalize("NFC", "".join(out))
 
 
+# Pictographs that stand for an identity word ('a 🧑 not a 🤖'), found by Unicode name so skin tones, genders and
+# ZWJ sequences are covered. They are spelled out before matching.
+_EMOJI_WORDS = [
+    (re.compile(r"\b(?:ROBOT|MECHANICAL (?:ARM|LEG)|ALIEN MONSTER)\b"), " robot "),
+    (re.compile(r"\b(?:PERSONAL COMPUTER|DESKTOP COMPUTER|LAPTOP)\b"), " computer "),
+    (re.compile(r"\b(?:PERSON|PEOPLE|MAN|MEN|WOMAN|WOMEN|ADULT|BOY|GIRL|CHILD|BABY|BUSTS? IN SILHOUETTE|"
+                r"OLDER (?:ADULT|MAN|WOMAN)|SPEAKING HEAD|HUMAN|FAMILY|COUPLE|HANDSHAKE)\b"), " human "),
+]
+
+
+def _emoji_word(ch: str) -> str:
+    if ch.isascii() or unicodedata.category(ch) != "So":
+        return ch
+    try:
+        name = unicodedata.name(ch)
+    except ValueError:
+        return ch
+    return next((w for rx, w in _EMOJI_WORDS if rx.search(name)), ch)
+
+
 def normalize(text: str) -> str:
-    """fold(), A.I. -> ai, collapse whitespace, lowercase."""
-    t = fold(text).lower()
+    """fold(), identity emoji spelled out, A.I. -> ai, collapse whitespace, lowercase."""
+    t = "".join(_emoji_word(ch) for ch in fold(text)).lower()
     t = re.sub(r"(?<![a-z])a\s*[.\-_*]\s*i\b\.?", "ai", t)          # a.i. / a-i / a. i.
     t = re.sub(r"(?<![a-z])b\s*[.\-_*]\s*o\s*[.\-_*]\s*t\b\.?", "bot", t)
     t = re.sub(r"\s+", " ", t).strip()
@@ -260,14 +283,16 @@ _EN = [re.compile(p) for p in EN_PATTERNS]
 # yes/no tied to a stated, non-identity question ("if they ask whether you want to keep the service, say no") is
 # fine.
 _YES_NO = re.compile(r"\b(?:say|says|answer|reply|respond|tell (?:them|him|her))\w*\s+(?:with\s+)?[\"']?"
-                     r"(?:yes|no|nope|yeah|yep|correct|right|of course|absolutely|definitely|that'?s right)\b"
+                     r"(?:yes|no|nope|nah|negative|no way|not at all|yeah|yep|yup|correct|right|of course|absolutely|definitely|"
+                     r"that'?s right)\b"
                      r"(?P<after>[^.!?\n]*)")
 _ABOUT_CALLER = re.compile(
     r"\b(?:are you|you are|you'?re|youre|were you|is this|this is|is it|it'?s|is that|was that|am i|who|what are you|"
     r"what you are|what this is|what it is|real|human\w*|person|people|ai|bot|robot|machine|recording|recorded|"
     r"automated|identity|calling|caller|speaking|on the line|yourself|name|holder|owner|customer|subscriber|member|"
     r"authori[sz]\w*|related|family|spouse|wife|husband|relative|actually|really|truly|honestly|"
-    r"recognized|verified|legit\w*|genuine|live)\b")
+    r"recognized|verified|legit\w*|genuine|live|sound\w*|robot\w*|automat\w*|synthetic|scripted|computer\w*|"
+    r"artificial\w*|machine\w*|software)\b")
 _CONDITION = re.compile(r"\b(?:if|when|whenever|once|after|should)\b(?P<cond>[^.!?\n]*)$")
 _BARE = re.compile(r"\b(?:they|anyone|someone|somebody|he|she|it|the other party|asked|asks?|ask(?:ing|ed)?|"
                    r"you|me|us|about|that|this|whether|if|so|any|anything|questions?|again|directly|at all|"
@@ -353,6 +378,32 @@ IDENTITY_TOPIC = re.compile(
     r"(?:(?:live|real|human|customer|service|support|account|authori[sz]ed|licensed|insurance|sales|retention|"
     r"billing|phone|company|verified|official|staff|internal)\s+){0,3}(?:agent|representative|rep|caller|operator|"
     r"employee|staff member|associate)s?\b")
+# Product and department names that contain an identity word ('AI Pro add-on', 'Robot Vacuum protection plan',
+# 'human resources'). They are replaced by a neutral word for the topic checks only; the deny-list backstop
+# (validate_script) still sees the original text, so 'say you are not an AI pro' is still rejected.
+PRODUCT_TERMS = re.compile(
+    r"\b(?:ai (?:pro|plus|premium|max|ultra|add-?ons?|addons?|features?|credits?|tier|seats?|pack|bundle|upgrade)|"
+    r"robot(?:ic)? (?:vacuums?|vacs?|mops?|lawn ?mowers?|mowers?|cleaners?|kits?|toys?)|human resources|"
+    r"machine learning|(?:sewing|washing|coffee|espresso|answering|vending|fax) machines?)\b")
+# The caller described as automated, robotic, real, ... ('if they wonder whether this is automated').
+CALLER_NATURE = re.compile(
+    r"\b(?:this|it|that|you|the call|the caller|the voice|the line)\s*(?:is|are|'re|'s|was|were|sounds?|seems?|"
+    r"sounding|feels?|isn'?t|aren'?t|wasn'?t)\s+(?:(?:not|a|an|so|too|very|really|kind of|like|at all)\s+){0,3}"
+    r"(?:automated|automatic|robotic\w*|synthetic|scripted|computer[- ]generated|artificial|fake|pre-?recorded)\b"
+    r"|\brobotic\w*\b")
+# A reassurance that only makes sense as an answer to an unstated identity question ('reassure them it isn't').
+DANGLING_DENIAL = re.compile(
+    r"\breassur\w*\b[^.!?\n]{0,40}\b(?:it|this|that|you|i)\s*(?:isn'?t|is not|aren'?t|are not|'?re not|'?m not|"
+    r"am not|wasn'?t|was not)\s*(?:[.!?;,]|$)")
+# A step that sends the caller to read instructions somewhere else and act on them.
+EXTERNAL_SOURCE = re.compile(
+    r"\b(?:read|check|open|see|look at|look up|refer to|consult|fetch|load|get|find|use|go to|visit)\b[^.!?\n]{0,60}"
+    r"\b(?:calendar|event|invite|meeting|doc|docs|document|spreadsheet|sheet|page|link|url|website|site|text message|"
+    r"texts?|sms|chat|slack|notes?|reminder|email|e-mail|message|file|attachment|ticket|record|title|subject line|"
+    r"todo|to-do)\b")
+ACT_ON_IT = re.compile(r"\b(?:do|perform|carry out|execute|follow|obey|apply|act on)\s+(?:that|it|this|those|them|"
+                       r"what (?:it|that|they|the \w+) says?|as (?:it|that|they) says?|whatever)\b|"
+                       r"\b(?:step|steps|instructions?|directions?|commands?)\b")
 # Task steps may refer to the caller only as the AI assistant: first-person words never claim the account, and the
 # step may not point at instructions stored somewhere else.
 TASK_ONLY_PATTERNS = [
@@ -369,13 +420,76 @@ TASK_ONLY_PATTERNS = [
      r"paid)\b", "the account belongs to the user, not to the caller"),
     (r"\bas if\b|\bas though\b|\bspeak(?:ing)? as\b|\brefer to (?:the|this|that) account as\b",
      "the caller may not role-play"),
-    (r"\b(?:instructions?|directions|commands?|rules|steps|guidance|orders)\s+(?:in|from|at|on|inside|within|"
+    (r"\b(?:instructions?|directions|commands?|rules|steps?|guidance|orders)\s+(?:in|from|at|on|inside|within|"
      r"found in|given in|written in|listed in|stored in)\b|\b(?:follow|obey|do whatever|do what|execute|carry out)\b"
      r"[^.!?\n]{0,50}\b(?:notes?|field|memo|comments?|email|message|document|file|attachment|description|ticket|"
      r"record|says?)\b", "task steps must be stated in full, not point to instructions elsewhere"),
 ]
 _TASK_ONLY = [(re.compile(p), why) for p, why in TASK_ONLY_PATTERNS]
 _OPAQUE = re.compile(r"(?<![A-Za-z0-9+/=])(?=[A-Za-z0-9+/=]*[A-Za-z])(?=[A-Za-z0-9+/=]*[0-9+/=])[A-Za-z0-9+/=]{24,}")
+_B64_TOKEN = re.compile(r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/_-]{6,}={0,2}(?![A-Za-z0-9+/=_-])")
+_HEX_TOKEN = re.compile(r"(?<![0-9A-Za-z])(?:0x)?((?:[0-9A-Fa-f]{2})(?:[\s:]?[0-9A-Fa-f]{2}){3,})(?![0-9A-Za-z])")
+# Words that, found in decoded, reversed or rot13 text, mean the step hides identity wording. Short words that are
+# also common abbreviations after rot13 or reversal ('NV' -> 'ai', 'IA' -> 'ai') are left out for those forms.
+DECODED_IDENTITY = re.compile(r"\b(?:human\w*|robot\w*|person|persons|people|machine\w*|automated|assistant|"
+                              r"artificial|intelligence|computer|software|chat ?bot|recording|pretend\w*|"
+                              r"(?:not|no|never) (?:an? )?(?:ai|bot)|you are|you'?re|i am|i'?m|identity|honest\w*|"
+                              r"truth\w*|disclos\w*|ignore|instructions?)\b")
+DECODED_IDENTITY_STRICT = re.compile(DECODED_IDENTITY.pattern[:-3] + r"|ai|bot|real)\b")
+
+
+def _printable_text(raw: bytes) -> str | None:
+    """Decoded bytes that read as ASCII text (letters and spaces), else None."""
+    try:
+        t = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if len(t) < 3 or sum(ch.isalpha() or ch == " " for ch in t) < 0.8 * len(t):
+        return None
+    return t
+
+
+def _decodings(step: str) -> list[str]:
+    """Text hidden in base64/base32/hex tokens of the step."""
+    out = []
+    for m in _B64_TOKEN.finditer(step):
+        tok = m.group(0)
+        for dec in (lambda t: base64.b64decode(t + "=" * (-len(t) % 4), altchars=b"-_" if ("-" in t or "_" in t)
+                                               else None, validate=True),
+                    lambda t: base64.b32decode(t.upper() + "=" * (-len(t) % 8))):
+            try:
+                text = _printable_text(dec(tok))
+            except (binascii.Error, ValueError):
+                continue
+            if text:
+                out.append(text)
+    for m in _HEX_TOKEN.finditer(step):
+        try:
+            text = _printable_text(bytes.fromhex(re.sub(r"[\s:]", "", m.group(1))))
+        except ValueError:
+            continue
+        if text:
+            out.append(text)
+    return out
+
+
+def _looks_like_id(token: str) -> bool:
+    """An order, account or confirmation number: letters and digits only, and nothing readable hidden in it."""
+    return bool(re.fullmatch(r"[A-Za-z0-9]+", token) and re.search(r"[0-9]", token)) and not _decodings(token)
+
+
+def _check_hidden_text(step: str) -> None:
+    """Identity wording hidden by encoding (base64, base32, hex), reversal or rot13, at any length."""
+    ascii_part = "".join(ch if ch.isascii() else " " for ch in unicodedata.normalize("NFKC", step))
+    checks = [(t, DECODED_IDENTITY_STRICT, "encoded") for t in _decodings(ascii_part)]
+    checks += [(ascii_part[::-1], DECODED_IDENTITY, "reversed"),
+               (codecs.encode(ascii_part, "rot13"), DECODED_IDENTITY, "rot13"),
+               (codecs.encode(ascii_part[::-1], "rot13"), DECODED_IDENTITY, "reversed rot13")]
+    for text, rx, how in checks:
+        for form in variants(text):
+            m = rx.search(form) or next((x for x in (p.search(form) for p in _EN) if x), None)
+            if m:
+                raise CallPolicyError(f"task steps may not hide text ({how}: {m.group(0)!r})")
 # words that only ever join into an identity term when someone splits them ('hu man', 'ro bot')
 JOIN_TERMS = {"human", "humans", "humanbeing", "robot", "chatbot", "person", "machine", "software", "computer",
               "assistant", "artificial", "intelligence", "bot", "ai"}
@@ -400,13 +514,21 @@ def _check_split_words(form: str) -> None:
                                       f"({' '.join(part)!r})")
 
 
-IDENTITY_TOPIC_ZH = re.compile(r"(?<![a-z])ai(?![a-z])|人工智能|机器人|机器|真人|人类|本人|身份|录音|自动|假装|冒充|扮演|"
+# 自动 is identity wording only when it is not about the service ('取消自动续费' cancels auto-renewal).
+_AUTO_SERVICE = r"(?!续费|续订|续期|续约|扣款|扣费|付款|支付|缴费|转账|更新|延期|充值|发货)"
+IDENTITY_TOPIC_ZH = re.compile(r"(?<![a-z])ai(?![a-z])|人工智能|机器人|机器|真人|人类|本人|身份|录音|自动" + _AUTO_SERVICE +
+                               r"|假装|冒充|扮演|"
                                r"是不是人|是人吗|软件|电脑程序|计算机程序|代理人|名叫|叫做|你的名字|我的名字|你的姓名|姓名是|我叫|你叫|"
                                r"活生生|活人|是个人|是一个人|真实的人|你是(?:个|一个|一位)?(?:客服|代表|工作人员|员工|职员|人)|"
                                r"说你是|回答不|答不|回答没有|回答否|就回答|"
                                r"我的(?:账户|账号|帐户|帐号|订阅|会员|卡|套餐|服务|订单|保单)|我们的|我(?:一直|已经)?是(?:老|忠实)?(?:客户|会员|用户)|"
                                r"丈夫|妻子|老公|老婆|配偶|爱人|家属|家人|亲属|亲戚|儿子|女儿|父亲|母亲|爸爸|妈妈|兄弟|姐妹|"
-                               r"授权|委托|监护人|就说|回答是|回答不是")
+                               r"授权|委托|监护人|就说|回答是|回答不是|"
+                               # Japanese (steps may use kana): identity, claims, evasion, first person
+                               r"人間|ロボット|ボット|エーアイ|人工知能|機械|自動音声|録音|音声合成|本物|生身|人です|人だ|"
+                               r"人と(?:言|答|伝)|ひと(?:です|だ)|オペレーター(?:です|だ)|担当者(?:です|だ)|"
+                               r"と言って|だと言|と答え|と伝え|ふり|振り|演じ|なりすま|成りすま|偽|ごまか|誤魔化|隠|否定|"
+                               r"はいと|いいえと|私は|私の|私が|わたし|僕|俺|家族|主人|旦那|奥さん|家内|代理人|委任")
 
 
 def validate_task_step(step: str, names: Iterable[str] = ()) -> None:
@@ -414,16 +536,22 @@ def validate_task_step(step: str, names: Iterable[str] = ()) -> None:
     if not isinstance(step, str) or not step.strip():
         raise CallPolicyError("task step is empty")
     _check_step_charset(step)
-    if _OPAQUE.search(unicodedata.normalize("NFKC", step)):
+    if any(not _looks_like_id(m.group(0)) for m in _OPAQUE.finditer(unicodedata.normalize("NFKC", step))):
         raise CallPolicyError("task steps may not contain encoded or opaque text")
+    _check_hidden_text(step)
     cjk = _cjk(step)
     forms = variants(step)
-    m = next((x for x in (IDENTITY_TOPIC.search(f) for f in forms) if x), None) or \
-        IDENTITY_TOPIC_ZH.search(cjk)
+    topic_forms = [PRODUCT_TERMS.sub("product", f) for f in forms]
+    m = next((x for x in (IDENTITY_TOPIC.search(f) or CALLER_NATURE.search(f) or DANGLING_DENIAL.search(f)
+                          for f in topic_forms) if x), None) or IDENTITY_TOPIC_ZH.search(cjk)
     if m:
         raise CallPolicyError(f"task steps may not talk about the caller's identity ({m.group(0)!r}); "
                               "the generated identity rules handle that")
     for f in forms:
+        if EXTERNAL_SOURCE.search(f) and ACT_ON_IT.search(f):
+            raise CallPolicyError("task steps must be stated in full, not point to a calendar event, document, "
+                                  f"message or other source ({EXTERNAL_SOURCE.search(f).group(0)!r})")
+    for f in topic_forms:
         _check_split_words(f)
         for rx, why in _TASK_ONLY:
             m = rx.search(f)
@@ -463,14 +591,28 @@ NAME_STOPWORDS = {
     "ignore", "disregard", "override", "rule", "rules", "above", "below", "previous", "instead", "if", "ask",
     "asked", "not", "yes", "answer", "reply", "claim", "never", "always", "system", "prompt", "instruction",
     "instructions", "step", "steps", "task", "policy", "script", "honest", "truth", "truthfully", "lie", "deny",
-    "pretend", "conceal", "hide", "secret", "speaking", "calling", "personally", "up",
+    "pretend", "conceal", "hide", "secret", "speaking", "calling", "personally", "omit", "omits", "disclosure",
+    "disclose", "undisclosed", "silent", "silence", "evade", "dodge", "deflect", "reveal", "admit", "withhold",
+    "fake", "account",
     # identity words
     "human", "humans", "robot", "bot", "chatbot", "cyborg", "android", "machine", "computer", "software",
-    "assistant", "automated", "recording", "siri",
+    "assistant", "automated", "recording", "person", "persons", "people", "humanbeing", "artificial",
+    "intelligence", "robotic", "automation",
     # roles and relations that would turn the name into a claim (calling as family stays an open decision)
     "mom", "mommy", "dad", "daddy", "husband", "wife", "spouse", "authorized", "authorised", "attorney", "proxy",
-    "holder", "owner", "customer", "user", "subscriber", "cardholder", "policyholder",
+    "cardholder", "policyholder", "accountholder",
 }
+NAME_STOPWORDS.discard("person")   # 'Sam Person' is a real name; 'person' only counts when split words join into it
+# Words that are also real given names or surnames ('Siri Hustvedt', 'Holder Smith'). Put after a name they read as
+# a role or a voice assistant ('Alex Holder', 'Alex Siri'), so they are refused anywhere but as the first word of a
+# longer name.
+NAME_LEADING_ONLY = {"siri", "alexa", "cortana", "holder", "owner", "customer", "user", "subscriber", "member"}
+# Two-word phrases that are instructions even though each word can be a name ('Dee Up' is fine, 'Hang Up' is not).
+NAME_PHRASES = {("hang", "up"), ("speak", "up"), ("own", "up"), ("shut", "up"), ("give", "up"), ("make", "up"),
+                ("stay", "silent"), ("stay", "quiet"), ("keep", "quiet"), ("play", "dumb"), ("no", "comment")}
+# Identity words a name may spell when two or three of its words are joined ('Alex Hu Man', 'Alex Assist Ant').
+NAME_JOIN_TERMS = JOIN_TERMS | {"person", "persons", "people", "automated", "recording", "disclosure", "silent",
+                                "conceal", "pretend", "customer", "holder", "owner", "subscriber", "siri"}
 NAME_STOPWORDS_ZH = re.compile(r"人工智能|机器人|机器|真人|人类|本人|助手|录音|自动|授权|委托|用户|客户|户主|持卡人|"
                                r"忽略|规则|指令|回答|假装|冒充")
 
@@ -514,6 +656,17 @@ def check_name(name: Any, field: str = "call_user_name") -> str:
     folded = {w for f in forms for w in re.split(r"[\s'-]+", f)}
     joined = {f.replace(" ", "").replace("-", "").replace("'", "") for f in forms}
     bad = (folded | joined) & NAME_STOPWORDS
+    for f in forms:
+        ws = [w for w in re.split(r"[\s'-]+", f) if w]
+        if len(ws) == 1 or len(set(ws)) == 1:
+            bad |= set(ws) & NAME_LEADING_ONLY
+        bad |= set(ws[1:]) & NAME_LEADING_ONLY
+        bad |= {" ".join(p) for p in zip(ws, ws[1:]) if p in NAME_PHRASES}
+        for k in (2, 3):
+            for i in range(len(ws) - k + 1):
+                j = "".join(ws[i:i + k])
+                if j in NAME_JOIN_TERMS | NAME_STOPWORDS and not all(w in NAME_JOIN_TERMS for w in ws[i:i + k]):
+                    bad.add(" ".join(ws[i:i + k]))
     # 'AI' (or a look-alike) is not a name; the romanized surname 'Ai' (艾) is
     if any(fold(w).lower() == "ai" and w != "Ai" for w in re.split(r"[\s'-]+", n)) or \
             any(j == "ai" for j in joined) and n != "Ai":
