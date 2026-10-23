@@ -209,9 +209,12 @@ Charles before any live cancellation.
   `/`, so any path), and so is the filesystem root.
   - Payments and credits are found by descriptor or by a type column, and are always dropped, whatever their sign.
     The descriptor match is precise: autopay, "thank you", "payment received", card/credit card/loan/mortgage
-    payment, online/mobile/ACH/e-payment, a line that is only payment words and reference numbers, refunds and
-    statement credits. A merchant name followed by PMT or PAYMENT ("GOOGLE *YOUTUBE PMT", "SPOTIFY PAYMENT") is a
-    charge, and a line with a billing-channel prefix (D29) is a charge unless it says refund or statement credit.
+    payment, online/mobile/ACH/e-payment, refunds and statement credits, and a line with no merchant name that is
+    only payment and balance words and reference numbers ("PAYMENT", "BILL PAY", "DIRECTPAY FULL BALANCE",
+    "PAYMENT TO CARD 1234"). A merchant name followed by PMT or PAYMENT ("GOOGLE *YOUTUBE PMT", "SPOTIFY PAYMENT") is a
+    charge. A line with a billing-channel prefix (D29) is a charge unless it says refund or statement credit, or,
+    for PayPal, Google and Square-style prefixes, nothing but payment words follow the prefix ("PAYPAL *PAYMENT"
+    is a payment, "PAYPAL *HULU PAYMENT" is a charge). APPLE.COM/BILL and AMZN DIGITAL lines are always charges.
     Bare "credit" is not matched, because credit monitoring is a real subscription.
   - Sign convention of a single amount column, never by majority vote: a type column decides from its sale rows;
     else the payment lines decide (negative payments: the usual convention; positive payments: purchases are
@@ -286,9 +289,13 @@ Charles before any live cancellation.
       identity words (human, robot, bot, AI, assistant, machine, ...), and role words (husband, wife, mom, holder,
       customer, authorized, ...). Real names such as "Nguyễn Văn An", "Grace Son", "Ray Parent", "Sam Person",
       "Destiny Real", "Rob Agent" and "Ai Weiwei" pass.
-    - Words that are also real names (Siri, Holder, Owner, Customer, User, Subscriber, Member, ...) pass only as
-      the first word of a longer name: "Siri Hustvedt" and "Holder Smith" pass, "Alex Siri" and "Alex Holder" do
-      not. Known limitation: a real surname in that list ("Eric Holder") is refused.
+    - Voice-assistant names that are also given names (Siri, Alexa, Cortana) pass only as the first word of a
+      longer name: "Siri Hustvedt" passes, "Siri" and "Alex Siri" do not.
+    - Account-role words (holder, owner, customer, user, subscriber, member, client, ...) and service or team
+      words (service, support, team, department, desk, billing, care, ...) are refused in any position, so
+      "Customer Service", "User Support", "Owner Smith" and "Subscriber Alex" are rejected. "Holder Smith" cannot
+      be told apart from "Owner Smith" by a principled rule, so it is refused too (safety first). Known limitation:
+      real names with these words ("Holder Smith", "Eric Holder", "Member Lee") are refused.
     - Instruction phrases made of name-like words are refused ("Hang Up", "Stay Silent"; "Dee Up" passes), and so
       are words that join into an identity or instruction word ("Alex Hu Man", "Alex Assist Ant", "Alex Ro Bot"). The task-step filters are not applied to names any more:
       names are already bound to the saved identity and strictly charset-checked, which leaves little room for

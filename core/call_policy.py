@@ -601,12 +601,19 @@ NAME_STOPWORDS = {
     # roles and relations that would turn the name into a claim (calling as family stays an open decision)
     "mom", "mommy", "dad", "daddy", "husband", "wife", "spouse", "authorized", "authorised", "attorney", "proxy",
     "cardholder", "policyholder", "accountholder",
+    # account roles (review 5622969472): refused in any position. 'Holder Smith' cannot be told apart from
+    # 'Owner Smith' or 'Customer Service' by any rule that is not a guess, so real names with these words are
+    # refused too (safety first, see D30).
+    "holder", "holders", "owner", "owners", "customer", "customers", "user", "users", "subscriber", "subscribers",
+    "member", "members", "client", "clients", "patron", "accountowner",
+    # service / team words that turn a name into a department ('User Support', 'Billing Team')
+    "service", "services", "support", "team", "department", "dept", "desk", "helpdesk", "helpline", "billing",
+    "admin", "administrator", "staff", "operator", "representative", "rep", "care", "center", "centre",
 }
 NAME_STOPWORDS.discard("person")   # 'Sam Person' is a real name; 'person' only counts when split words join into it
-# Words that are also real given names or surnames ('Siri Hustvedt', 'Holder Smith'). Put after a name they read as
-# a role or a voice assistant ('Alex Holder', 'Alex Siri'), so they are refused anywhere but as the first word of a
-# longer name.
-NAME_LEADING_ONLY = {"siri", "alexa", "cortana", "holder", "owner", "customer", "user", "subscriber", "member"}
+# Voice-assistant names that are also real given names ('Siri Hustvedt'). Put after a name, or alone, they read as
+# the voice assistant ('Alex Siri', 'Siri'), so they are refused anywhere but as the first word of a longer name.
+NAME_LEADING_ONLY = {"siri", "alexa", "cortana"}
 # Two-word phrases that are instructions even though each word can be a name ('Dee Up' is fine, 'Hang Up' is not).
 NAME_PHRASES = {("hang", "up"), ("speak", "up"), ("own", "up"), ("shut", "up"), ("give", "up"), ("make", "up"),
                 ("stay", "silent"), ("stay", "quiet"), ("keep", "quiet"), ("play", "dumb"), ("no", "comment")}

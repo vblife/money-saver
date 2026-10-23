@@ -54,17 +54,36 @@ PAYMENT_RX = re.compile(
     + _PAY + r"\s+(?:received|recvd|rcvd|posted|thank)|"
     r"refund|return(?:ed)?\s+(?:item|merchandise|purchase)|statement\s+credit|credit\s+(?:adj\w*|voucher|balance)|"
     r"cash\s*back\s+(?:reward|redemption)\w*)\b", re.I)
-# A line that is nothing but payment words, reference digits and punctuation ("PAYMENT", "PMT 0412 REF 77").
-_PAYMENT_ONLY_RX = re.compile(r"^(?:\W|\d|\b(?:" + _PAY + r"|ref|conf|no|id)\b)*$", re.I)
+# A line that is nothing but payment words, balance words, reference numbers and punctuation, with at least one
+# payment word: "PAYMENT", "PMT 0412 REF 77", "BILL PAY", "DIRECTPAY FULL BALANCE". Any merchant name in the line
+# ("SPOTIFY PAYMENT") makes it a charge.
+_PAY_WORD = r"(?:payments?|pymts?|pmts?|pay|directpay|autopay|epay(?:ment)?|e-?pay(?:ment)?)"
+_PAYMENT_FILLER = (r"(?:bill|direct|full|balance|statement|stmt|minimum|min|current|new|amount|amt|due|online|mobile|"
+                   r"web|internet|ach|electronic|received|recvd|rcvd|posted|thank|you|from|chk|checking|savings|acct|"
+                   r"account|ref|conf|confirmation|no|id|nbr|num|number|to|card)")
+_PAYMENT_ONLY_RX = re.compile(r"^(?=.*\b" + _PAY_WORD + r"\b)(?:\W|\d|\b(?:" + _PAY_WORD + "|" + _PAYMENT_FILLER +
+                              r")\b)*$", re.I)
+# Aggregator prefixes whose rest names the merchant. "PAYPAL *PAYMENT" (no merchant) is a payment; "PAYPAL *HULU
+# PAYMENT" is a charge. APPLE.COM/BILL and AMZN DIGITAL name the merchant themselves, so they are always charges.
+_MERCHANT_AFTER_PREFIX = {"paypal", "google_play", "direct"}
+
+
+def _payment_only(text: str) -> bool:
+    return bool(text.strip() and _PAYMENT_ONLY_RX.match(text.strip()))
 
 
 def is_payment_descriptor(desc: str) -> bool:
-    """A card/loan payment or a credit (D26). Lines billed through a merchant or aggregator prefix (PAYPAL *,
-    GOOGLE *, APPLE.COM/BILL, ...) are charges unless they say refund or credit."""
+    """A card/loan payment or a credit (D26). A line billed through a merchant or aggregator prefix (PAYPAL *,
+    GOOGLE *, APPLE.COM/BILL, ...) is a charge unless it says refund or statement credit, or, for PayPal, Google
+    and Square-style prefixes, nothing but payment words follow the prefix."""
     text = desc or ""
-    if any(rx.match(text) for rx, _ in PREFIXES):
-        return bool(re.search(r"\b(?:refund|statement\s+credit)\b", text, re.I))
-    return bool(PAYMENT_RX.search(text) or (text.strip() and _PAYMENT_ONLY_RX.match(text.strip())))
+    for rx, channel in PREFIXES:
+        m = rx.match(text)
+        if m:
+            if re.search(r"\b(?:refund|statement\s+credit)\b", text, re.I):
+                return True
+            return channel in _MERCHANT_AFTER_PREFIX and _payment_only(m.group("rest"))
+    return bool(PAYMENT_RX.search(text) or _payment_only(text))
 
 
 # Billing-aggregator / processor prefixes in descriptors -> (billing_channel, keep-the-rest-as-merchant-text)

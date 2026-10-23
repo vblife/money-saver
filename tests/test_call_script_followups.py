@@ -81,7 +81,7 @@ def test_split_rot13_across_steps_rejected():
 
 
 # -- names ----------------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize("name", ["Siri Hustvedt", "Holder Smith", "Dee Up", "Sam Person", "Hằng Nguyễn", "Member Lee"])
+@pytest.mark.parametrize("name", ["Siri Hustvedt", "Dee Up", "Sam Person", "Hằng Nguyễn"])
 def test_real_names_now_accepted(name):
     assert check_name(name) == name
     script = build_call_script(name, ["Ask to cancel the subscription on this account."])
