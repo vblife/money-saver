@@ -445,6 +445,7 @@ SourceMessage（Gmail 邮件索引）被所有实体以 source_message_ids 引�
 - 真实执行（browser / bland_call / email）还需要：`config/execution.json` 中该渠道的开关（默认全部关闭，D33）、
   每个商家第一次真实取消的单独确认（D34）、第一次付费 Bland 通话由 Charles 批准（D35）、
   以及注册表中 `verified` 条目的目标（D36）。真实运行记录在 **LiveRun** 表：`id, action_request_id, run_id, executor, action_type, merchant_id, started_at`。
+- 取消成功后的跟进记录在 **CancelWatch** 表（D40-D42）：`id, subscription_id, action_request_id, run_id, executor, cancelled_on, confirm_by(完成后 48 小时), charge_check_on(next_charge_date + 3 天), status(awaiting_confirmation|confirmed|unconfirmed|charged_after_cancel), charge_checked, ledger_entry_id, confirmation_evidence_id, refund_request_id`。
 
 ### 6.13 Reminder
 `id, kind(trial_end|return_deadline|credit_expiry|points_expiry|gift_card_expiry|promo_end|insurance_renewal|claim_deadline|follow_up), target_ref, fire_at, status(scheduled|sent|dismissed|snoozed), snooze_until?`

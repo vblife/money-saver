@@ -116,6 +116,11 @@ For each one:
 7. Email: `email_cancel_handoff` returns the exact recipient, subject and body. Put them in a draft in the user's
    own mail app for them to review and send. Never send it yourself. When the user forwards the confirmation,
    record it as evidence and finish the run.
+8. After a successful cancel run, `finish_action_run` returns `follow_up`: the subscription status and the pending
+   ledger entry. When the merchant's confirmation email arrives, record it with `record_evidence` and call
+   `confirm_cancellation`. When the user asks about cancellations, or during a check-in, call
+   `check_cancel_watches` and show its notices. A refund request it creates still needs the user's confirmation,
+   like any other request. Never file a card dispute; only suggest that the user can.
 
 Never send an email as the user without their approval of that exact email. Never ask for, store, or log
 passwords, full card numbers, CVV, full SSN, or bank credentials; the user logs in themselves in the bot's browser.

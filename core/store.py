@@ -55,6 +55,7 @@ TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "savings_ledger": ("led", ("evidence_ids",)),
     "live_runs": ("lvr", ()),
     "merchant_method_proposals": ("mmp", ("steps", "source_urls")),
+    "cancel_watches": ("cwt", ()),
 }
 
 DDL = """
@@ -216,6 +217,18 @@ CREATE TABLE IF NOT EXISTS merchant_method_proposals (
   source_urls TEXT NOT NULL DEFAULT '[]', observed_ref TEXT, notes TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','exported','withdrawn')),
   dedupe_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+
+-- FR-1-13 / FR-1-15 (D40-D42): one row per successful cancellation run. Tracks the 48-hour confirmation watch and
+-- the post-charge check at next_charge_date + 3 days. Read and written only by modules/after_cancel.py tools.
+CREATE TABLE IF NOT EXISTS cancel_watches (
+  id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
+  action_request_id TEXT NOT NULL UNIQUE REFERENCES action_requests(id),
+  run_id TEXT NOT NULL REFERENCES action_runs(id), executor TEXT NOT NULL,
+  cancelled_on TEXT NOT NULL, confirm_by TEXT NOT NULL, charge_check_on TEXT,
+  status TEXT NOT NULL CHECK (status IN ('awaiting_confirmation','confirmed','unconfirmed','charged_after_cancel')),
+  charge_checked INTEGER NOT NULL DEFAULT 0, ledger_entry_id TEXT REFERENCES savings_ledger(id),
+  confirmation_evidence_id TEXT REFERENCES evidence(id), refund_request_id TEXT REFERENCES action_requests(id),
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_ar_status ON action_requests(status);
 CREATE INDEX IF NOT EXISTS idx_led_status ON savings_ledger(status, occurred_at);

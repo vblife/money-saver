@@ -24,6 +24,7 @@ from core.classifier import CATEGORIES, Classifier  # noqa: E402
 from core.execution_policy import LiveGuard  # noqa: E402
 from executors import bland as bland_mod, browser as browser_mod  # noqa: E402
 from executors.email import EmailHandoffExecutor  # noqa: E402
+from modules.after_cancel import CancelFollowUp, FollowUpError  # noqa: E402
 from core.evidence import KINDS as EVIDENCE_KINDS, EvidencePathError, EvidenceStore  # noqa: E402
 from core.ledger import MODULES, Ledger, LedgerError  # noqa: E402
 from core.merchant_resolver import MerchantResolver  # noqa: E402
@@ -192,6 +193,15 @@ TOOLS = [
     {"name": "email_cancel_handoff", "title": "Hand over an approved cancellation email",
      "description": "FR-1-12: for an approved email request, return the exact recipient, subject and body to put in a draft in the user's own mail app. Never sends. The run stays needs_user until the user forwards the confirmation.",
      "inputSchema": O({"request_id": S, "lang": {"type": "string", "enum": ["en", "zh"]}}, ["request_id"])},
+    {"name": "cancel_watch_status", "title": "Cancellation follow-ups",
+     "description": "FR-1-13/15: the watches started by successful cancellation runs (48-hour confirmation watch, post-charge check). Read-only.",
+     "inputSchema": O({"subscription_id": S}), "annotations": RO},
+    {"name": "confirm_cancellation", "title": "Confirm a cancellation with the merchant's email",
+     "description": "FR-1-13: link the merchant's cancellation confirmation email (evidence kind confirmation_email, recorded with record_evidence) to a finished cancellation. Marks the subscription cancelled and verifies its pending ledger entry.",
+     "inputSchema": O({"subscription_id": S, "evidence_id": S}, ["subscription_id", "evidence_id"])},
+    {"name": "check_cancel_watches", "title": "Check cancellation follow-ups",
+     "description": "FR-1-13/15: mark cancellations with no confirmation after 48 hours as cancel_unconfirmed, and from next_charge_date + 3 days look for a charge after the cancellation (then charged_after_cancel, the ledger entry reversed, and a refund request for the user to confirm). Returns notices to show the user. Never contacts a merchant.",
+     "inputSchema": O({"lang": {"type": "string", "enum": ["en", "zh"]}})},
     {"name": "record_merchant_method_proposal", "title": "Record a learned cancellation method",
      "description": "Q11/D32: store a cancellation method the bot learned (URL, phone, email, steps) as a proposal, separate from the reviewed merchant registry. Proposals never drive a cancellation; they reach the registry only through a reviewed PR.",
      "inputSchema": O({"merchant_id": S, "merchant_name": S, "method": {"type": "string", "enum": list(PROPOSAL_METHODS)},
@@ -374,7 +384,16 @@ class App:
             out = {"run": run}
             if saved or errors:
                 out.update(proposals_recorded=saved, proposal_errors=errors)
+            follow = CancelFollowUp(st, gate).on_run_finished(run)
+            if follow:
+                out["follow_up"] = follow
             return out
+        if name == "cancel_watch_status":
+            return {"watches": CancelFollowUp(st, gate).status(a.get("subscription_id"))}
+        if name == "confirm_cancellation":
+            return CancelFollowUp(st, gate).confirm(a["subscription_id"], a["evidence_id"])
+        if name == "check_cancel_watches":
+            return CancelFollowUp(st, gate).check(a.get("lang", "en"))
         if name == "execution_status":
             return self.live_guard.status(st)
         if name == "plan_cancellation":
@@ -484,7 +503,7 @@ class Server:
                 raise KeyError(f"unknown tool: {name}")
             try:
                 r = self.app.call(name, p.get("arguments"))
-            except (GateError, LedgerError, ForbiddenDataError, EvidencePathError, StatementError, FileNotFoundError, ValueError, TypeError, KeyError) as e:
+            except (GateError, FollowUpError, LedgerError, ForbiddenDataError, EvidencePathError, StatementError, FileNotFoundError, ValueError, TypeError, KeyError) as e:
                 return {"content": [{"type": "text", "text": f"Error: {type(e).__name__}: {e}"}], "isError": True}
             return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False)}], "structuredContent": r}
         raise NotImplementedError(meth)

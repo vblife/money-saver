@@ -422,3 +422,18 @@ learned cancellation methods are proposals until a reviewed PR adds them to the 
   reviewed `cancel_email`), subject and body for a draft in the user's own mail app. The user reviews and sends it
   themselves. The run stays `needs_user` until the user forwards the merchant's confirmation. Nothing in the repo
   sends mail.
+- **D40 After a successful cancel run, the subscription and the ledger are updated automatically.** When
+  `finish_action_run` closes a `cancel_subscription` run with `success`, the bot adds a `pending` recurring entry
+  `cancel:<subscription_id>` for the monthly-equivalent amount (6.11; skipped when no amount is known). If the
+  run's evidence includes the merchant's confirmation email, the subscription becomes `cancelled` and the entry is
+  verified by that email. Otherwise the subscription becomes `cancel_in_progress` and a `cancel_watches` row starts
+  the 48-hour watch (FR-1-13). `confirm_cancellation` links a confirmation email that arrives later.
+- **D41 The follow-up check is a tool, not a routine.** `check_cancel_watches` moves watches with no confirmation
+  after 48 hours to `cancel_unconfirmed`. From `next_charge_date + 3 days` (FR-1-15), it looks for a positive charge
+  dated after the cancellation day. If one is found, the subscription becomes `charged_after_cancel`, the ledger
+  entry is reversed, and a `submit_claim` refund request (executor `manual`, status `pending_user`) is created for
+  the user to confirm. Nothing contacts the merchant. The bot never files card disputes; it only suggests them. No
+  routine is added; a read-and-remind R5 is still for Charles to decide.
+- **D42 No charge is not proof.** If no charge appears after the cancellation, the entry stays `pending`: the bot
+  may simply not have the latest statement. Only a confirmation email verifies a cancellation saving for now.
+  Whether a statement showing no charge should also verify it is a question for Charles.
