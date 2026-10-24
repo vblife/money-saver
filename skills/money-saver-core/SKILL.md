@@ -112,7 +112,9 @@ For each one:
 6. Calls: `place_cancel_call` for an approved `bland_call` request, then `check_cancel_call` until it ends. Read the
    transcript; finish with `success` and the transcript evidence only if the merchant confirmed the cancellation.
    If the honesty audit failed, tell the user and do not call again until it is reviewed. `stop_cancel_call` ends a
-   call early.
+   call early. If `place_cancel_call` returns `status: unknown`, Bland may already have placed the call: never place
+   it again. Ask the user to check the Bland call log for the returned `external_id`, then close the run with
+   `finish_action_run`.
 7. Email: `email_cancel_handoff` returns the exact recipient, subject and body. Put them in a draft in the user's
    own mail app for them to review and send. Never send it yourself. When the user forwards the confirmation,
    record it as evidence and finish the run.

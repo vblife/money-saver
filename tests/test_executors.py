@@ -265,6 +265,17 @@ def test_unsuccessful_calls_fail_with_manual_fallback(store, clock, live, status
     assert res["run"]["error_code"] == f"call_{status.replace('-', '_')}" and "manual" in res["next_step"]
 
 
+def test_a_queued_call_cannot_be_placed_twice(store, clock, live):
+    guard, gate, ev = live
+    req = call_request(gate, store, guard)
+    fake = bland.FakeBlandClient()
+    ex = bland.BlandCallExecutor(gate, fake, ev, clock)
+    assert ex.place(req["id"])["status"] == "queued"
+    with pytest.raises(GateError, match="already placed a call"):
+        ex.place(req["id"])
+    assert len(fake.sent) == 1
+
+
 def test_bland_unavailable_fails_the_run(store, clock, live):
     guard, gate, ev = live
     req = call_request(gate, store, guard)
