@@ -429,8 +429,9 @@ learned cancellation methods are proposals until a reviewed PR adds them to the 
     the `external_id` (the run id) and leaves the run open. The open run blocks every other call (one at a time,
     D38), and `place_cancel_call` refuses to place that request again. A person checks the Bland call log for that
     `external_id` and closes the run with `finish_action_run`. Only failures that show nothing was placed fail the
-    run as `bland_unavailable`: DNS, connection refused or TLS setup errors, an HTTP 4xx, or `status: error`. Read
-    and stop requests never place a call, so their errors are plain `bland_unavailable`.
+    run as `bland_unavailable`: DNS errors, connection refused, a TLS certificate that fails verification, an HTTP
+    4xx, or `status: error`. Any other TLS error (such as an EOF while reading the reply) is unknown. Read and stop
+    requests never place a call, so their errors are plain `bland_unavailable`.
   - *Error bodies are kept.* HTTP error bodies are stored on the exception (`status`, `body`) and in the run log,
     with the API key replaced by `[redacted]` and the text cut to 2000 characters.
 - **D39 Email cancellation is a handoff, never a send.** `executors/email.py` returns the approved recipient (the

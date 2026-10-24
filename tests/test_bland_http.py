@@ -5,6 +5,7 @@ import io
 import json
 import os
 import socket
+import ssl
 import urllib.error
 
 import pytest
@@ -113,6 +114,9 @@ def replying(raw):
 @pytest.mark.parametrize("opener", [
     raising(socket.timeout("timed out")), raising(TimeoutError()), raising(urllib.error.URLError(TimeoutError())),
     raising(http.client.RemoteDisconnected("closed")), raising(ConnectionResetError()),
+    raising(ssl.SSLEOFError(8, "EOF occurred in violation of protocol")),
+    raising(ssl.SSLZeroReturnError(6, "TLS/SSL connection has been closed")), raising(ssl.SSLError(1, "bad record")),
+    raising(urllib.error.URLError(ssl.SSLEOFError(8, "EOF"))),
     replying(b"<html>Bad gateway</html>"), replying(b"[1, 2]"), replying(b"\xff\xfe"), replying(b'"queued"'),
 ])
 def test_send_call_timeouts_and_unreadable_replies_are_unknown(opener):
@@ -123,6 +127,8 @@ def test_send_call_timeouts_and_unreadable_replies_are_unknown(opener):
 
 @pytest.mark.parametrize("opener", [
     raising(urllib.error.URLError(ConnectionRefusedError())), raising(urllib.error.URLError(socket.gaierror())),
+    raising(urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))),
+    raising(ssl.SSLCertVerificationError(1, "certificate verify failed")),
 ])
 def test_send_call_failures_before_sending_are_unavailable(opener):
     with pytest.raises(BlandUnavailableError):
@@ -169,6 +175,8 @@ def test_server_error_on_send_is_unknown_and_keeps_the_body():
     lambda: bland.FakeBlandClient(send_response="queued"),
     lambda: bland_http.HttpBlandClient(api_key="k", opener=raising(socket.timeout())),
     lambda: bland_http.HttpBlandClient(api_key="k", opener=replying(b"<html>")),
+    lambda: bland_http.HttpBlandClient(api_key="k", opener=raising(ssl.SSLEOFError(8, "EOF"))),
+    lambda: bland_http.HttpBlandClient(api_key="k", opener=raising(ssl.SSLZeroReturnError(6, "closed"))),
 ])
 def test_unknown_send_keeps_the_run_open_and_blocks_retries(store, clock, live, client):  # noqa: F811
     guard, gate, ev = live
@@ -208,3 +216,12 @@ def test_definite_rejection_still_fails_the_run(store, clock, live):  # noqa: F8
     http = bland_http.HttpBlandClient(api_key="k", opener=raising(http_error(402, b'{"message": "balance"}')))
     out = bland.BlandCallExecutor(gate, http, ev, clock).place(req2["id"])
     assert out["status"] == "failed" and "HTTP 402" in out["run"]["log"][-1]["error"]
+
+
+def test_certificate_failure_on_send_fails_the_run(store, clock, live):  # noqa: F811
+    guard, gate, ev = live
+    req = call_request(gate, store, guard)
+    http = bland_http.HttpBlandClient(api_key="k", opener=raising(
+        urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))))
+    out = bland.BlandCallExecutor(gate, http, ev, clock).place(req["id"])
+    assert out["status"] == "failed" and out["error_code"] == "bland_unavailable"

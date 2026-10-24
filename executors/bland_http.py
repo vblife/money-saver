@@ -15,8 +15,9 @@ Hardening (D38a):
 * ``POST /v1/calls`` may already have queued a paid call when the reply times out, cannot be read, or is a server
   error (5xx). Those raise :class:`CallStatusUnknownError`, never :class:`BlandUnavailableError`, so the executor
   keeps the run open as ``unknown`` and a retry cannot place a second call. The same goes for any other transport
-  failure on that request. Only failures before anything was sent (DNS, connection refused, TLS setup) or a
-  rejection by Bland (4xx) raise ``BlandUnavailableError``.
+  failure on that request, including TLS errors other than certificate verification. Only failures before
+  anything was sent (DNS, connection refused, TLS certificate verification) or a rejection by Bland (4xx) raise
+  ``BlandUnavailableError``.
 * An HTTP error's response body is kept on the exception (``.status``, ``.body``; at most 2000 characters) with the
   key removed.
 
@@ -48,9 +49,11 @@ def _is_timeout(exc: BaseException) -> bool:
 
 
 def _never_sent(exc: BaseException) -> bool:
-    """Only failures that happen before the request leaves this machine: DNS, connection refused, TLS setup."""
+    """Only failures that happen before the request leaves this machine: DNS, connection refused, or a TLS
+    certificate that fails verification. Any other TLS error (for example ``SSLEOFError`` or ``SSLZeroReturnError``
+    while reading the reply) may come after the POST went out, so it is not one of these."""
     reason = getattr(exc, "reason", exc) if isinstance(exc, urllib.error.URLError) else exc
-    return isinstance(reason, (ConnectionRefusedError, socket.gaierror, ssl.SSLError))
+    return isinstance(reason, (ConnectionRefusedError, socket.gaierror, ssl.SSLCertVerificationError))
 
 
 class BlandHttpError(BlandUnavailableError):
