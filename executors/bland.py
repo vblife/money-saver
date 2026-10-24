@@ -43,7 +43,12 @@ class CallLimitError(GateError):
 
 
 class BlandUnavailableError(RuntimeError):
-    pass
+    """Bland definitely did not take the request (no connection, or it answered with an error)."""
+
+
+class CallStatusUnknownError(RuntimeError):
+    """``POST /v1/calls`` may or may not have queued a paid call (timeout, unreadable or ambiguous reply).
+    The run is never failed on this: it stays open as ``unknown`` so no retry can place a second call."""
 
 
 class CallClient(Protocol):
@@ -55,15 +60,24 @@ class CallClient(Protocol):
 class FakeBlandClient:
     """Records payloads and replays scripted call details. Never touches the network."""
 
-    def __init__(self, details: Mapping[str, Any] | None = None, fail_send: bool = False):
+    def __init__(self, details: Mapping[str, Any] | None = None, fail_send: bool = False,
+                 unknown_send: bool = False, send_response: Any = None):
         self.sent: list[dict[str, Any]] = []
         self.stopped: list[str] = []
         self.details = dict(details or {})
         self.fail_send = fail_send
+        self.unknown_send = unknown_send
+        self.send_response = send_response
 
     def send_call(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         if self.fail_send:
             raise BlandUnavailableError("fake Bland outage")
+        if self.unknown_send:
+            self.sent.append(dict(payload))
+            raise CallStatusUnknownError("fake timeout after sending")
+        if self.send_response is not None:
+            self.sent.append(dict(payload))
+            return self.send_response
         self.sent.append(dict(payload))
         return {"status": "success", "message": "Call successfully queued.", "call_id": f"fake-call-{len(self.sent)}",
                 "batch_id": None}
@@ -162,6 +176,12 @@ class BlandCallExecutor:
     def place(self, request_id: str, lang: str = "en") -> dict[str, Any]:
         req = self.gate.require_approved(request_id, "bland_call")
         self.gate.live_guard.check(self.gate.store, req)  # fail before checking anything else
+        for open_run in self.gate.store.find("action_runs", {"action_request_id": request_id}):
+            if open_run["finished_at"] is None and open_run["executor"] == "bland_call":
+                if self._is_unknown(open_run):
+                    raise GateError(self.UNKNOWN_NEXT_STEP.format(run_id=open_run["id"]))
+                raise GateError(f"run {open_run['id']} already placed a call for this request; use "
+                                "check_cancel_call or stop_cancel_call instead of placing it again")
         merchant = (self.gate.live_guard.registry.get((req.get("constraints") or {}).get("merchant_id") or "")
                     or {})
         check_limits(self.gate.store, self.now_fn().astimezone(timezone.utc), merchant.get("timezone"))
@@ -174,12 +194,35 @@ class BlandCallExecutor:
             resp = self.client.send_call(payload)
         except BlandUnavailableError as exc:
             return self._fail(run, "bland_unavailable", str(exc))
+        except CallStatusUnknownError as exc:
+            return self._unknown(run, str(exc))
+        if isinstance(resp, dict) and resp.get("status") == "error":
+            errors = resp.get("errors")
+            return self._fail(run, "bland_unavailable", f"Bland did not queue the call: "
+                              f"{resp.get('message') or 'error'}" + (f" ({errors})" if errors else ""))
         if not isinstance(resp, dict) or resp.get("status") != "success" or not resp.get("call_id"):
-            msg = resp.get("message") if isinstance(resp, dict) else None
-            return self._fail(run, "bland_unavailable", f"Bland did not queue the call: {msg or 'no call_id'}")
+            return self._unknown(run, f"unexpected reply to POST /v1/calls: {str(resp)[:300]}")
         self.gate.append_run_log(run["id"], [{"bland_call_id": resp["call_id"], "queued": True,
                                               "max_duration_minutes": payload["max_duration"]}])
         return {"run_id": run["id"], "call_id": resp["call_id"], "status": "queued"}
+
+    UNKNOWN_NEXT_STEP = ("Do not place this call again. Bland may already have queued it. Check the Bland call log "
+                         "for external_id {run_id}, then close this run with finish_action_run (success with "
+                         "evidence if the call happened and cancelled the service, otherwise failed). Until then "
+                         "no other call can start.")
+
+    def _unknown(self, run: Mapping[str, Any], message: str) -> dict[str, Any]:
+        """The call may have been placed: keep the run open (it blocks any other call) and ask for verification."""
+        self.gate.append_run_log(run["id"], [{"bland_call_status": "unknown", "needs_verification": True,
+                                              "external_id": run["id"], "error": message}])
+        return {"run_id": run["id"], "status": "unknown", "needs_verification": True, "error": message,
+                "next_step": self.UNKNOWN_NEXT_STEP.format(run_id=run["id"])}
+
+    @staticmethod
+    def _is_unknown(run: Mapping[str, Any]) -> bool:
+        log = [e for e in run.get("log") or [] if isinstance(e, dict)]
+        return any(e.get("bland_call_status") == "unknown" for e in log) and not any(
+            e.get("bland_call_id") for e in log)
 
     def _call_id(self, run: Mapping[str, Any]) -> str:
         ids = [e["bland_call_id"] for e in run.get("log") or [] if isinstance(e, dict) and e.get("bland_call_id")]
@@ -199,6 +242,9 @@ class BlandCallExecutor:
             raise GateError(f"{run_id} is not a call run")
         if run["finished_at"] is not None:
             return {"run_id": run_id, "status": "finished", "run": run}
+        if self._is_unknown(run):
+            return {"run_id": run_id, "status": "unknown", "needs_verification": True,
+                    "next_step": self.UNKNOWN_NEXT_STEP.format(run_id=run_id)}
         call_id = self._call_id(run)
         try:
             details = self.client.get_call(call_id)
@@ -239,6 +285,9 @@ class BlandCallExecutor:
         run = self.gate.store.get("action_runs", run_id)
         if run is None or run["executor"] != "bland_call" or run["finished_at"] is not None:
             raise GateError(f"{run_id} is not an open call run")
+        if self._is_unknown(run):
+            raise GateError(f"run {run_id} has no confirmed Bland call id; "
+                            + self.UNKNOWN_NEXT_STEP.format(run_id=run_id))
         call_id = self._call_id(run)
         try:
             self.client.stop_call(call_id)

@@ -418,10 +418,21 @@ learned cancellation methods are proposals until a reviewed PR adds them to the 
   (opening disclosure, a truthful answer when asked, no human or user claims). A failed audit fails the run.
   Recording stays off until Charles decides on consent. The dispatch choice (plain `task` or a Bland agent, persona
   or pathway) is still open.
-- **D38a (pending Charles) Real Bland HTTP client.** `executors/bland_http.py` (`HttpBlandClient`) is the only code
-  that reads `BLAND_API_KEY` and sends it to api.bland.ai. Nothing constructs it: the server's `bland_client` stays
-  `None` until a deploy change passes one in, and all D35/D38 gates still apply. It merges only with Charles's
-  explicit approval (B3).
+- **D38a Real Bland HTTP client.** Charles approved it and it merged in #13. `executors/bland_http.py`
+  (`HttpBlandClient`) is the only code that reads `BLAND_API_KEY` and sends it to Bland. Nothing constructs it: the
+  server's `bland_client` stays `None` until a deploy change passes one in, and all D35/D38 gates still apply.
+  - *Locked base URL.* Every request goes to `https://api.bland.ai/v1`. There is no constructor argument, config
+    key or environment variable that changes it, and `base_url` is read-only, so the key cannot be sent anywhere else.
+  - *Unknown, not failed, when `POST /v1/calls` is ambiguous.* A timeout, an unreadable or non-object reply, a
+    reply without `status: success` and a `call_id`, an HTTP 5xx, or a connection lost after sending may mean Bland
+    already placed a paid call. The executor then logs `bland_call_status: unknown`, `needs_verification: true` and
+    the `external_id` (the run id) and leaves the run open. The open run blocks every other call (one at a time,
+    D38), and `place_cancel_call` refuses to place that request again. A person checks the Bland call log for that
+    `external_id` and closes the run with `finish_action_run`. Only failures that show nothing was placed fail the
+    run as `bland_unavailable`: DNS, connection refused or TLS setup errors, an HTTP 4xx, or `status: error`. Read
+    and stop requests never place a call, so their errors are plain `bland_unavailable`.
+  - *Error bodies are kept.* HTTP error bodies are stored on the exception (`status`, `body`) and in the run log,
+    with the API key replaced by `[redacted]` and the text cut to 2000 characters.
 - **D39 Email cancellation is a handoff, never a send.** `executors/email.py` returns the approved recipient (the
   reviewed `cancel_email`), subject and body for a draft in the user's own mail app. The user reviews and sends it
   themselves. The run stays `needs_user` until the user forwards the merchant's confirmation. Nothing in the repo
